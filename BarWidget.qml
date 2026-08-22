@@ -42,12 +42,42 @@ BarWidget {
   readonly property var activePlayer: mediaService && mediaService.activePlayer ? mediaService.activePlayer : findFallbackActivePlayer()
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
 
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(activePlayer.trackTitle || activePlayer.trackArtist) || Boolean(activePlayer.isPlaying))
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(activePlayer.trackTitle || activePlayer.trackArtist) || Boolean(activePlayer.isPlaying) || Boolean(activePlayer.metadata && (activePlayer.metadata["xesam:title"] || activePlayer.metadata["xesam:artist"])))
   readonly property string playIcon: activePlayer && activePlayer.isPlaying ? "󰏤" : "󰐊"
-  readonly property string title: activePlayer ? (activePlayer.trackTitle || activePlayer.identity || activePlayer.desktopEntry || "Playing") : ""
-  readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
-  readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
-  readonly property string artUrl: activePlayer && activePlayer.trackArtUrl ? activePlayer.trackArtUrl : ""
+  
+  readonly property string title: {
+    if (!activePlayer) return ""
+    if (activePlayer.trackTitle) return String(activePlayer.trackTitle)
+    if (activePlayer.metadata && activePlayer.metadata["xesam:title"]) return String(activePlayer.metadata["xesam:title"])
+    if (activePlayer.identity) return String(activePlayer.identity)
+    if (activePlayer.desktopEntry) return String(activePlayer.desktopEntry)
+    return "Playing"
+  }
+
+  readonly property string artist: {
+    if (!activePlayer) return ""
+    if (activePlayer.trackArtist) return String(activePlayer.trackArtist)
+    if (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) {
+      var a = activePlayer.metadata["xesam:artist"]
+      return Array.isArray(a) ? a.join(", ") : String(a)
+    }
+    return ""
+  }
+
+  readonly property string album: {
+    if (!activePlayer) return ""
+    if (activePlayer.trackAlbum) return String(activePlayer.trackAlbum)
+    if (activePlayer.metadata && activePlayer.metadata["xesam:album"]) return String(activePlayer.metadata["xesam:album"])
+    return ""
+  }
+
+  readonly property string artUrl: {
+    if (!activePlayer) return ""
+    if (activePlayer.trackArtUrl) return String(activePlayer.trackArtUrl)
+    if (activePlayer.metadata && (activePlayer.metadata["mpris:artUrl"] || activePlayer.metadata["xesam:artUrl"]))
+      return String(activePlayer.metadata["mpris:artUrl"] || activePlayer.metadata["xesam:artUrl"])
+    return ""
+  }
 
   property bool popupOpen: false
   property bool isMinimized: false
