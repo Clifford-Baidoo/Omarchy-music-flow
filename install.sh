@@ -86,16 +86,21 @@ if not config or not isinstance(config, dict):
 
 bar = config.setdefault("bar", {})
 layout = bar.setdefault("layout", {})
-left = layout.setdefault("left", [])
 
 plugin_id = "custom.media"
 
-# Remove any old duplicates
+# 1. Clean any duplicate or old media widgets from all sections
 for sec in ["left", "center", "right"]:
     if sec in layout and isinstance(layout[sec], list):
-        layout[sec] = [item for item in layout[sec] if not (isinstance(item, dict) and item.get("id") in [plugin_id, "omarchy.media"])]
+        layout[sec] = [
+            item for item in layout[sec] 
+            if not (isinstance(item, dict) and (item.get("id") in [plugin_id, "omarchy.media"] or str(item.get("id", "")).endswith(".media")))
+        ]
 
-# Insert custom.media after omarchy.workspaces in left section
+# 2. Get the left section AFTER cleaning
+left = layout.setdefault("left", [])
+
+# 3. Insert custom.media after omarchy.workspaces (or append if workspaces not in left)
 inserted = False
 for i, item in enumerate(left):
     if isinstance(item, dict) and item.get("id") == "omarchy.workspaces":
@@ -106,7 +111,7 @@ for i, item in enumerate(left):
 if not inserted:
     left.append({"id": plugin_id})
 
-# Disable stock omarchy.media to prevent duplicate services
+# 4. Disable stock omarchy.media to prevent duplicate service collision
 disabled = config.setdefault("disabledPlugins", [])
 if "omarchy.media" not in disabled:
     disabled.append("omarchy.media")
@@ -114,6 +119,8 @@ if "omarchy.media" not in disabled:
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
+
+print("Status bar layout updated: custom.media successfully registered in shell.json.")
 PYEOF
 
 # 5. Restart Omarchy Shell
