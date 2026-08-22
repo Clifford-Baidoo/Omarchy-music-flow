@@ -16,21 +16,39 @@ TARGET_DIR="${HOME}/.config/omarchy/plugins/${PLUGIN_ID}"
 
 echo -e "${YELLOW}==>${NC} Uninstalling ${RED}Omarchy Music Flow${NC} [${PLUGIN_ID}]..."
 
-# Remove plugin files
+# Remove plugin directory
 if [ -d "${TARGET_DIR}" ]; then
     rm -rf "${TARGET_DIR}"
     echo -e "${BLUE}==>${NC} Removed plugin directory: ${TARGET_DIR}"
 fi
 
-# Remove from Omarchy shell configuration
+# Clean up configuration in shell.json
+python3 - << 'PYEOF'
+import json, os
+
+config_path = os.path.expanduser("~/.config/omarchy/shell.json")
+if os.path.isfile(config_path):
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        
+        layout = config.get("bar", {}).get("layout", {})
+        for sec in ["left", "center", "right"]:
+            if sec in layout and isinstance(layout[sec], list):
+                layout[sec] = [item for item in layout[sec] if not (isinstance(item, dict) and item.get("id") == "custom.media")]
+        
+        disabled = config.get("disabledPlugins", [])
+        if "omarchy.media" in disabled:
+            disabled.remove("omarchy.media")
+            
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+    except Exception:
+        pass
+PYEOF
+
+# Reload Omarchy Shell
 if command -v omarchy >/dev/null 2>&1; then
-    echo -e "${BLUE}==>${NC} Removing ${PLUGIN_ID} from status bar..."
-    omarchy bar remove "${PLUGIN_ID}" >/dev/null 2>&1 || true
-    omarchy plugin disable "${PLUGIN_ID}" >/dev/null 2>&1 || true
-
-    # Restore default omarchy.media plugin if desired
-    omarchy plugin enable "omarchy.media" >/dev/null 2>&1 || true
-
     echo -e "${BLUE}==>${NC} Reloading Omarchy shell..."
     omarchy restart shell
     echo -e "${GREEN}✔ Uninstall complete! Restored default media widget.${NC}"

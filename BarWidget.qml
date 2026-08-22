@@ -1,20 +1,50 @@
 import QtQuick
 import Quickshell
+import Quickshell.Services.Mpris
 import qs.Ui
 import qs.Commons
 
 BarWidget {
+  id: root
   moduleName: "custom.media"
 
-  readonly property var mediaService: (bar && bar.shell)
-    ? (bar.shell.serviceFor(root.moduleName) || bar.shell.serviceFor("custom.media") || bar.shell.serviceFor("omarchy.media") || bar.shell.firstPartyServiceFor("omarchy.media"))
-    : null
-  readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
-  readonly property var sourcePlayers: mediaService ? mediaService.sourcePlayers : []
+  property var service: null
+  readonly property var mediaService: {
+    if (service) return service
+    if (!root.bar || !root.bar.shell) return null
+    if (root.moduleName && root.bar.shell.serviceFor(root.moduleName))
+      return root.bar.shell.serviceFor(root.moduleName)
+    if (root.bar.shell.serviceFor("custom.media"))
+      return root.bar.shell.serviceFor("custom.media")
+    if (root.bar.shell.serviceFor("nek0.media"))
+      return root.bar.shell.serviceFor("nek0.media")
+    if (root.bar.shell.serviceFor("omarchy.media"))
+      return root.bar.shell.serviceFor("omarchy.media")
+    if (root.bar.shell.firstPartyServiceFor("omarchy.media"))
+      return root.bar.shell.firstPartyServiceFor("omarchy.media")
+    return null
+  }
 
-  readonly property bool hasMedia: activePlayer !== null && Boolean(activePlayer.trackTitle || activePlayer.trackArtist)
+  readonly property var fallbackPlayers: Mpris.players ? Mpris.players.values : []
+
+  function findFallbackActivePlayer() {
+    var list = fallbackPlayers || []
+    var fallback = null
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i]
+      if (!p) continue
+      if (p.isPlaying) return p
+      if (!fallback && (p.trackTitle || p.trackArtist || p.canPlay)) fallback = p
+    }
+    return fallback
+  }
+
+  readonly property var activePlayer: mediaService && mediaService.activePlayer ? mediaService.activePlayer : findFallbackActivePlayer()
+  readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
+
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(activePlayer.trackTitle || activePlayer.trackArtist) || Boolean(activePlayer.isPlaying))
   readonly property string playIcon: activePlayer && activePlayer.isPlaying ? "󰏤" : "󰐊"
-  readonly property string title: activePlayer ? (activePlayer.trackTitle || "") : ""
+  readonly property string title: activePlayer ? (activePlayer.trackTitle || activePlayer.identity || activePlayer.desktopEntry || "Playing") : ""
   readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
   readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
   readonly property string artUrl: activePlayer && activePlayer.trackArtUrl ? activePlayer.trackArtUrl : ""
@@ -25,14 +55,52 @@ BarWidget {
   function close() { popupOpen = false }
   property real maxLabelWidth: 220
 
+  function playerKey(player) {
+    if (!player) return ""
+    if (mediaService && typeof mediaService.playerKey === "function") return mediaService.playerKey(player)
+    return String(player.dbusName || player.desktopEntry || player.identity || "")
+  }
+
+  function runAction(action, targetPlayer) {
+    var p = targetPlayer || activePlayer
+    if (!p) return
+    if (mediaService && typeof mediaService.runAction === "function") {
+      mediaService.runAction(action, false, playerKey(p))
+      return
+    }
+    if (action === "playPause") {
+      if (typeof p.playPause === "function") p.playPause()
+      else if (p.isPlaying && typeof p.pause === "function") p.pause()
+      else if (typeof p.play === "function") p.play()
+    } else if (action === "next" && typeof p.next === "function") {
+      p.next()
+    } else if (action === "previous" && typeof p.previous === "function") {
+      p.previous()
+    }
+  }
+
+  function selectPlayer(targetPlayer) {
+    if (!targetPlayer) return
+    if (mediaService && typeof mediaService.selectPlayer === "function") {
+      mediaService.selectPlayer(playerKey(targetPlayer))
+      return
+    }
+    if (typeof targetPlayer.play === "function") targetPlayer.play()
+  }
+
   function sourceName(player) {
     if (!player) return "Media"
     var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
     if (id.indexOf("spotify") !== -1) return "Spotify"
-    if (id.indexOf("firefox") !== -1 || id.indexOf("zen") !== -1) return "Firefox"
+    if (id.indexOf("seanime") !== -1) return "Seanime"
+    if (id.indexOf("mpv") !== -1) return "MPV"
+    if (id.indexOf("vlc") !== -1) return "VLC"
+    if (id.indexOf("firefox") !== -1) return "Firefox"
+    if (id.indexOf("zen") !== -1) return "Zen"
     if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1) return "Browser"
     if (id.indexOf("cliamp") !== -1) return "cliamp"
-    if (id.indexOf("vlc") !== -1) return "VLC"
+    if (id.indexOf("stremio") !== -1) return "Stremio"
+    if (id.indexOf("celluloid") !== -1) return "Celluloid"
     return player.identity || player.desktopEntry || "Player"
   }
 
@@ -40,9 +108,12 @@ BarWidget {
     if (!player) return "󰝚"
     var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
     if (id.indexOf("spotify") !== -1) return "󰓇"
-    if (id.indexOf("firefox") !== -1 || id.indexOf("zen") !== -1 || id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return "󰗃"
-    if (id.indexOf("cliamp") !== -1) return "󰎆"
+    if (id.indexOf("seanime") !== -1) return "󰚩"
+    if (id.indexOf("mpv") !== -1) return "󰐹"
     if (id.indexOf("vlc") !== -1) return "󰕼"
+    if (id.indexOf("firefox") !== -1 || id.indexOf("zen") !== -1 || id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1) return "󰗃"
+    if (id.indexOf("cliamp") !== -1) return "󰎆"
+    if (id.indexOf("stremio") !== -1 || id.indexOf("celluloid") !== -1 || id.indexOf("video") !== -1) return "󰐹"
     return "󰝚"
   }
 
@@ -62,7 +133,7 @@ BarWidget {
     width: root.isMinimized ? height : (flowRow.implicitWidth + Style.space(16))
     radius: height / 2
     clip: true
-    color: clickArea.containsMouse ? Style.tint(root.bar.barForeground, 0.05) : "transparent"
+    color: clickArea.containsMouse ? Style.tint(root.bar ? root.bar.barForeground : Color.foreground, 0.05) : "transparent"
     borderSpec: Border.none()
 
     Behavior on width {
@@ -78,16 +149,15 @@ BarWidget {
       anchors.fill: parent
       anchors.margins: Style.space(2)
       visible: !root.isMinimized
-      opacity: (activePlayer && activePlayer.isPlaying) ? 0.38 : 0.12
 
       property real phase: 0
 
       NumberAnimation on phase {
-        running: activePlayer && activePlayer.isPlaying && !root.isMinimized
-        loops: Animation.Infinite
+        running: Boolean(root.activePlayer && root.activePlayer.isPlaying)
         from: 0
         to: Math.PI * 2
-        duration: 3000
+        duration: 1800
+        loops: Animation.Infinite
       }
 
       onPhaseChanged: requestPaint()
@@ -98,7 +168,7 @@ BarWidget {
         if (width <= 0 || height <= 0) return
 
         var midY = height / 2
-        var isPlaying = Boolean(activePlayer && activePlayer.isPlaying)
+        var isPlaying = Boolean(root.activePlayer && root.activePlayer.isPlaying)
         var amp = isPlaying ? height * 0.32 : 0
 
         // Primary flowing wave
@@ -116,7 +186,7 @@ BarWidget {
         // Secondary harmonic flowing wave
         if (isPlaying) {
           ctx.lineWidth = 1.0
-          ctx.strokeStyle = root.bar.barForeground
+          ctx.strokeStyle = root.bar ? root.bar.barForeground : Color.foreground
           ctx.beginPath()
           for (var x2 = 0; x2 <= width; x2 += 3) {
             var k2 = (x2 / width) * Math.PI * 3
@@ -137,8 +207,8 @@ BarWidget {
       Text {
         anchors.centerIn: parent
         text: "󰝚"
-        color: (activePlayer && activePlayer.isPlaying) ? Color.accent : (clickArea.containsMouse ? Color.accent : root.bar.barForeground)
-        font.family: root.bar.fontFamily
+        color: (root.activePlayer && root.activePlayer.isPlaying) ? Color.accent : (clickArea.containsMouse ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground))
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
         font.bold: true
         Behavior on color { ColorAnimation { duration: 140 } }
@@ -157,8 +227,8 @@ BarWidget {
         id: glyph
         anchors.verticalCenter: parent.verticalCenter
         text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
-        color: (activePlayer && activePlayer.isPlaying) ? Color.accent : (root.hasMedia ? root.bar.barForeground : Qt.darker(root.bar.barForeground, 1.4))
-        font.family: root.bar.fontFamily
+        color: (root.activePlayer && root.activePlayer.isPlaying) ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4))
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
         font.bold: true
 
@@ -175,14 +245,14 @@ BarWidget {
         height: Math.max(glyph.implicitHeight, Style.space(16))
         clip: true
         anchors.verticalCenter: parent.verticalCenter
-        visible: !root.bar.vertical
+        visible: !root.bar || !root.bar.vertical
 
         Text {
           id: idleLabel
           visible: !root.hasMedia
           text: "Music"
-          color: Qt.darker(root.bar.barForeground, 1.4)
-          font.family: root.bar.fontFamily
+          color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4)
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.bodySmall
           font.bold: true
           anchors.verticalCenter: parent.verticalCenter
@@ -199,8 +269,8 @@ BarWidget {
           Text {
             id: titleText
             text: root.title
-            color: root.bar.barForeground
-            font.family: root.bar.fontFamily
+            color: root.bar ? root.bar.barForeground : Color.foreground
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             font.bold: true
             anchors.verticalCenter: parent.verticalCenter
@@ -210,8 +280,8 @@ BarWidget {
             id: sepText
             visible: root.artist !== ""
             text: "·"
-            color: Qt.darker(root.bar.barForeground, 1.5)
-            font.family: root.bar.fontFamily
+            color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.5)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             anchors.verticalCenter: parent.verticalCenter
           }
@@ -220,15 +290,15 @@ BarWidget {
             id: artistText
             visible: root.artist !== ""
             text: root.artist
-            color: Qt.darker(root.bar.barForeground, 1.3)
-            font.family: root.bar.fontFamily
+            color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.3)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             anchors.verticalCenter: parent.verticalCenter
           }
 
           SequentialAnimation on x {
             id: scrollAnim
-            running: titleRow.needsScroll && !root.popupOpen && !root.bar.vertical && root.hasMedia && !root.isMinimized
+            running: titleRow.needsScroll && !root.popupOpen && (!root.bar || !root.bar.vertical) && root.hasMedia && !root.isMinimized
             loops: Animation.Infinite
 
             PauseAnimation { duration: 2500 }
@@ -259,24 +329,24 @@ BarWidget {
 
     onClicked: function(mouse) {
       if (mouse.button === Qt.MiddleButton) {
-        if (root.mediaService) root.mediaService.runAction("playPause", false, root.activePlayer ? root.mediaService.playerKey(root.activePlayer) : undefined)
+        root.runAction("playPause", root.activePlayer)
       } else {
         root.popupOpen = !root.popupOpen
       }
     }
     onWheel: function(wheel) {
       if (!root.activePlayer) return
-      if (wheel.angleDelta.y > 0 && root.mediaService) {
-        root.mediaService.runAction("previous", false, root.mediaService.playerKey(root.activePlayer))
-      } else if (wheel.angleDelta.y < 0 && root.mediaService) {
-        root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
+      if (wheel.angleDelta.y > 0) {
+        root.runAction("previous", root.activePlayer)
+      } else if (wheel.angleDelta.y < 0) {
+        root.runAction("next", root.activePlayer)
       }
     }
     onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? (root.title + (root.artist ? " — " + root.artist : "")) : "Music Player")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
-  // Dedicated Floating Player & Source Selection Window (like Battery/Display panels)
+  // Dedicated Floating Player & Source Selection Window
   PopupCard {
     id: popup
     anchorItem: root
@@ -291,7 +361,7 @@ BarWidget {
       anchors.fill: parent
       spacing: Style.space(12)
 
-      // Header: Album Artwork Hero & Track Info
+      // Top Row: Album Cover Art & Song Info
       Row {
         spacing: Style.space(12)
         width: parent.width
@@ -300,8 +370,8 @@ BarWidget {
           width: Style.space(72)
           height: Style.space(72)
           radius: Style.spacing.labelGap
-          color: Style.normalFillFor(root.bar.foreground, Color.accent)
-          borderSpec: Border.controlSpec("normal", root.bar.foreground, Color.accent)
+          color: Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.08)
+          borderSpec: Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
 
           Image {
             anchors.fill: parent
@@ -317,7 +387,7 @@ BarWidget {
             visible: root.artUrl === ""
             text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
             color: Color.accent
-            font.family: root.bar.fontFamily
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.displayLarge
           }
         }
@@ -327,23 +397,20 @@ BarWidget {
           width: parent.width - Style.space(84)
           anchors.verticalCenter: parent.verticalCenter
 
-          // Source Tag
+          // Active Source Badge
           Row {
             spacing: Style.space(4)
-            visible: root.hasMedia
-
             Text {
               text: root.sourceIcon(root.activePlayer)
               color: Color.accent
-              font.family: root.bar.fontFamily
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               anchors.verticalCenter: parent.verticalCenter
             }
-
             Text {
-              text: root.sourceName(root.activePlayer)
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
+              text: root.sourceName(root.activePlayer).toUpperCase()
+              color: Color.accent
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
               font.bold: true
               anchors.verticalCenter: parent.verticalCenter
@@ -351,9 +418,9 @@ BarWidget {
           }
 
           Text {
-            text: root.title || "No track playing"
-            color: root.bar.foreground
-            font.family: root.bar.fontFamily
+            text: root.title || "Nothing playing"
+            color: root.bar ? root.bar.foreground : Color.foreground
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.subtitle
             font.bold: true
             elide: Text.ElideRight
@@ -362,8 +429,8 @@ BarWidget {
 
           Text {
             text: root.artist
-            color: Qt.darker(root.bar.foreground, 1.2)
-            font.family: root.bar.fontFamily
+            color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.3)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
             width: parent.width
@@ -372,8 +439,8 @@ BarWidget {
 
           Text {
             text: root.album
-            color: Qt.darker(root.bar.foreground, 1.6)
-            font.family: root.bar.fontFamily
+            color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
             width: parent.width
@@ -389,12 +456,12 @@ BarWidget {
 
         Button {
           iconText: "󰒮"
-          foreground: root.bar.foreground
+          foreground: root.bar ? root.bar.foreground : Color.foreground
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && root.activePlayer.canGoPrevious
           opacity: enabled ? 1.0 : 0.4
-          onClicked: if (root.mediaService) root.mediaService.runAction("previous", false, root.mediaService.playerKey(root.activePlayer))
+          onClicked: root.runAction("previous", root.activePlayer)
         }
 
         Button {
@@ -405,25 +472,25 @@ BarWidget {
           iconSize: Style.font.iconLarge
           enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
           opacity: enabled ? 1.0 : 0.4
-          onClicked: if (root.mediaService) root.mediaService.runAction("playPause", false, root.mediaService.playerKey(root.activePlayer))
+          onClicked: root.runAction("playPause", root.activePlayer)
         }
 
         Button {
           iconText: "󰒭"
-          foreground: root.bar.foreground
+          foreground: root.bar ? root.bar.foreground : Color.foreground
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && root.activePlayer.canGoNext
           opacity: enabled ? 1.0 : 0.4
-          onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
+          onClicked: root.runAction("next", root.activePlayer)
         }
       }
 
       PanelSeparator {
-        foreground: root.bar.foreground
+        foreground: root.bar ? root.bar.foreground : Color.foreground
       }
 
-      // Source / Player Switcher Section (like Display / Audio Sinks)
+      // Source / Player Switcher Section
       Column {
         width: parent.width
         spacing: Style.space(6)
@@ -433,15 +500,15 @@ BarWidget {
           Text {
             text: "󱘖"
             color: Color.accent
-            font.family: root.bar.fontFamily
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             anchors.verticalCenter: parent.verticalCenter
           }
 
           Text {
             text: "SELECT PLAYER / SOURCE"
-            color: Qt.darker(root.bar.foreground, 1.4)
-            font.family: root.bar.fontFamily
+            color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
+            font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
             font.bold: true
             anchors.verticalCenter: parent.verticalCenter
@@ -452,8 +519,8 @@ BarWidget {
         Text {
           visible: root.sourcePlayers.length === 0
           text: "No active media players found."
-          color: Qt.darker(root.bar.foreground, 1.6)
-          font.family: root.bar.fontFamily
+          color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.bodySmall
           anchors.horizontalCenter: parent.horizontalCenter
           topPadding: Style.space(6)
@@ -470,21 +537,21 @@ BarWidget {
 
             readonly property var player: modelData
             readonly property bool selected: root.activePlayer && player
-              && root.mediaService.playerKey(root.activePlayer) === root.mediaService.playerKey(player)
+              && root.playerKey(root.activePlayer) === root.playerKey(player)
             readonly property string name: root.sourceName(player)
             readonly property string icon: root.sourceIcon(player)
-            readonly property string track: player ? (player.trackTitle || "Idle") : "Idle"
+            readonly property string track: player ? (player.trackTitle || player.identity || "Active Player") : "Active Player"
             readonly property string artistName: player && player.trackArtist ? player.trackArtist : ""
 
             width: parent.width
             height: Style.space(42)
             radius: Style.spacing.labelGap
             color: selected
-              ? Style.selectedFillFor(root.bar.foreground, Color.accent)
-              : (sourceCardMouse.containsMouse ? Style.hoverFillFor(root.bar.foreground, Color.accent) : Style.tint(root.bar.foreground, 0.04))
+              ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+              : (sourceCardMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
             borderSpec: selected
-              ? Border.controlSpec("normal", root.bar.foreground, Color.accent)
-              : (sourceCardMouse.containsMouse ? Border.controlSpec("hover-cursor", root.bar.foreground, Color.accent) : Border.none())
+              ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+              : (sourceCardMouse.containsMouse ? Border.controlSpec("hover-cursor", root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Border.none())
 
             Row {
               anchors.left: parent.left
@@ -496,8 +563,8 @@ BarWidget {
 
               Text {
                 text: sourceRow.icon
-                color: sourceRow.selected ? Color.accent : root.bar.foreground
-                font.family: root.bar.fontFamily
+                color: sourceRow.selected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
                 anchors.verticalCenter: parent.verticalCenter
               }
@@ -509,8 +576,8 @@ BarWidget {
 
                 Text {
                   text: sourceRow.name
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
+                  color: root.bar ? root.bar.foreground : Color.foreground
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.bodySmall
                   font.bold: sourceRow.selected
                   elide: Text.ElideRight
@@ -519,8 +586,8 @@ BarWidget {
 
                 Text {
                   text: sourceRow.track + (sourceRow.artistName ? " — " + sourceRow.artistName : "")
-                  color: sourceRow.selected ? root.bar.foreground : Qt.darker(root.bar.foreground, 1.5)
-                  font.family: root.bar.fontFamily
+                  color: sourceRow.selected ? (root.bar ? root.bar.foreground : Color.foreground) : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.5)
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
                   width: parent.width
@@ -529,8 +596,8 @@ BarWidget {
 
               Text {
                 text: sourceRow.player && sourceRow.player.isPlaying ? "󰏤" : "󰐊"
-                color: sourceRow.selected ? Color.accent : Qt.darker(root.bar.foreground, 1.6)
-                font.family: root.bar.fontFamily
+                color: sourceRow.selected ? Color.accent : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 anchors.verticalCenter: parent.verticalCenter
               }
@@ -541,7 +608,7 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: if (root.mediaService) root.mediaService.selectPlayer(root.mediaService.playerKey(sourceRow.player))
+              onClicked: root.selectPlayer(sourceRow.player)
             }
           }
         }
@@ -549,4 +616,3 @@ BarWidget {
     }
   }
 }
-
