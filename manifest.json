@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "nek0.media",
+  "name": "My Media",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "description": "MPRIS media control service",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "My Media",
+    "description": "MPRIS now-playing with playback controls",
+    "category": "Media",
+    "allowMultiple": false
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.media"
+  }
+}
