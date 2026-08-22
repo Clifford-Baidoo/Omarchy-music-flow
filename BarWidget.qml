@@ -4,10 +4,11 @@ import qs.Ui
 import qs.Commons
 
 BarWidget {
-  id: root
-  moduleName: "nek0.media"
+  moduleName: "custom.media"
 
-  readonly property var mediaService: bar?.shell?.serviceFor("nek0.media") || bar?.shell?.serviceFor("omarchy.media") || bar?.shell?.firstPartyServiceFor("omarchy.media")
+  readonly property var mediaService: (bar && bar.shell)
+    ? (bar.shell.serviceFor(root.moduleName) || bar.shell.serviceFor("custom.media") || bar.shell.serviceFor("omarchy.media") || bar.shell.firstPartyServiceFor("omarchy.media"))
+    : null
   readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
   readonly property var sourcePlayers: mediaService ? mediaService.sourcePlayers : []
 

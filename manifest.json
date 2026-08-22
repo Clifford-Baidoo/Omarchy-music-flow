@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "nek0.media",
-  "name": "My Media",
+  "id": "custom.media",
+  "name": "Music Flow",
   "version": "1.0.0",
-  "author": "Omarchy",
-  "description": "MPRIS media control service",
+  "author": "Omarchy Community",
+  "description": "MPRIS media visualizer and player controller",
   "kinds": [
     "service",
     "bar-widget"
@@ -15,8 +15,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "My Media",
-    "description": "MPRIS now-playing with playback controls",
+    "displayName": "Music Flow",
+    "description": "MPRIS soundwave visualizer with floating player window",
     "category": "Media",
     "allowMultiple": false
   },

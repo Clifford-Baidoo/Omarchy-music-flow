@@ -48,9 +48,21 @@ chmod +x install.sh
 ```
 
 The installer will:
-1. Copy the plugin files to `~/.config/omarchy/plugins/<username>.media/`.
+1. Copy the plugin files to `~/.config/omarchy/plugins/custom.media/`.
 2. Automatically configure your bar layout in `~/.config/omarchy/shell.json`.
 3. Restart `omarchy-shell` to apply changes instantly.
+
+---
+
+## 🗑️ Uninstallation
+
+To remove Music Flow and restore the default media widget:
+
+```bash
+cd omarchy-music-flow
+chmod +x uninstall.sh
+./uninstall.sh
+```
 
 ---
 
@@ -78,6 +90,7 @@ omarchy-music-flow/
 ├── MediaModel.js         # DBus player detection & metadata formatting
 ├── manifest.json         # Omarchy shell plugin manifest
 ├── install.sh            # Automated installer script
+├── uninstall.sh          # Automated uninstaller script
 └── README.md             # Documentation & screenshots
 ```
 
