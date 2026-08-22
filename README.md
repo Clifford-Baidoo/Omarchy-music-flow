@@ -6,6 +6,18 @@ Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your s
 
 ---
 
+## 📸 Screenshots
+
+### 🎵 Status Bar Soundwave Flow
+*Seamless, borderless audio wave flow with marquee song title and artist on the top bar.*
+![Omarchy Music Flow Bar](assets/bar-flow.png)
+
+### 🎛️ Floating Player & Multi-Source Selector Panel
+*Dedicated floating media window with album artwork, playback deck, and one-click source switching (Spotify, YouTube / Browser, cliamp, etc.).*
+![Omarchy Music Player Panel](assets/player-panel.png)
+
+---
+
 ## ✨ Features
 
 - 🎵 **Pure Soundwave Visualizer Flow**: Dual-layer harmonic wave oscillating horizontally across the status bar in real-time with your theme's accent color.
@@ -21,7 +33,6 @@ Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your s
   - **Left-Click**: Open/close the dedicated floating Player & Source Selector window.
   - **Middle-Click**: Toggle Play / Pause.
   - **Scroll Wheel**: Scroll up/down over the widget to skip backward/forward tracks.
-  - **Right-Click**: Direct access to the source menu.
 
 ---
 
@@ -59,12 +70,15 @@ The installer will:
 
 ```
 omarchy-music-flow/
-├── BarWidget.qml     # Status bar music flow & floating PopupCard panel
-├── Service.qml       # MPRIS audio service & multi-source coordinator
-├── MediaModel.js     # DBus player detection & metadata formatting
-├── manifest.json     # Omarchy shell plugin manifest
-├── install.sh        # Automated installer script
-└── README.md         # Documentation
+├── assets/
+│   ├── bar-flow.png      # Screenshot of bar visualizer flow
+│   └── player-panel.png  # Screenshot of floating player & source switcher
+├── BarWidget.qml         # Status bar music flow & floating PopupCard panel
+├── Service.qml           # MPRIS audio service & multi-source coordinator
+├── MediaModel.js         # DBus player detection & metadata formatting
+├── manifest.json         # Omarchy shell plugin manifest
+├── install.sh            # Automated installer script
+└── README.md             # Documentation & screenshots
 ```
 
 ---
