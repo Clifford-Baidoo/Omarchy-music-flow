@@ -62,6 +62,14 @@ BarWidget {
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
   readonly property bool isPlaying: mediaService ? mediaService.isPlaying : (activePlayer && activePlayer.isPlaying)
 
+  // Smooth fluid energy level (1.0 when playing, 0.15 calm ambient drift when paused)
+  readonly property real targetEnergy: isPlaying ? 1.0 : (hasMedia ? 0.18 : 0.08)
+  property real currentEnergy: targetEnergy
+
+  Behavior on currentEnergy {
+    NumberAnimation { duration: 550; easing.type: Easing.OutQuad }
+  }
+
   readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(isPlaying) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
   readonly property string playIcon: isPlaying ? "󰏤" : "󰐊"
   
@@ -164,7 +172,7 @@ BarWidget {
     NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
   }
 
-  // Bar Pill Capsule - Dynamic Reactive Flow Audio Visualizer
+  // Bar Pill Capsule - Dynamic Continuous Flow Audio Visualizer
   BorderSurface {
     id: pill
     anchors.centerIn: parent
@@ -184,7 +192,7 @@ BarWidget {
       ColorAnimation { duration: 180 }
     }
 
-    // Dynamic Multi-Mode Audio Visualizer Canvas with Reactive Intensity Flow
+    // Dynamic Multi-Mode Continuous Audio Visualizer Canvas
     Canvas {
       id: waveCanvas
       anchors.fill: parent
@@ -193,11 +201,12 @@ BarWidget {
 
       property real phase: 0
 
+      // Continuously moving phase so motion never freezes abruptly
       NumberAnimation on phase {
-        running: root.isPlaying
+        running: true
         from: 0
         to: Math.PI * 2
-        duration: 1800
+        duration: 2200
         loops: Animation.Infinite
       }
 
@@ -209,36 +218,36 @@ BarWidget {
         if (width <= 0 || height <= 0) return
 
         var midY = height / 2
-        var isPlayingNow = root.isPlaying
+        var energy = root.currentEnergy
         var mode = root.visualizerMode
 
         // Multi-frequency rhythm & beat intensity physics
-        var bassPulse = isPlayingNow ? Math.pow(Math.abs(Math.sin(phase * 2.5)), 3) : 0
-        var melodySwell = isPlayingNow ? (0.5 + 0.5 * Math.sin(phase * 0.35)) : 0
-        var intensity = 0.35 + bassPulse * 0.45 + melodySwell * 0.2
+        var bassPulse = Math.pow(Math.abs(Math.sin(phase * 2.5)), 3) * energy
+        var melodySwell = (0.5 + 0.5 * Math.sin(phase * 0.35)) * energy
+        var intensity = 0.2 + (bassPulse * 0.5 + melodySwell * 0.3) * energy
 
         if (mode === "wave") {
           // 1. DUAL HARMONIC REACTIVE OCEAN WAVE
-          var amp = isPlayingNow ? (height * (0.24 + intensity * 0.22)) : 0
+          var amp = height * (0.06 + energy * (0.22 + intensity * 0.15))
 
-          ctx.lineWidth = 1.4 + bassPulse * 0.8
-          ctx.strokeStyle = Color.accent
+          ctx.lineWidth = 1.2 + bassPulse * 0.8
+          ctx.strokeStyle = energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)
           ctx.beginPath()
           for (var x = 0; x <= width; x += 3) {
             var k = (x / width) * Math.PI * 4
-            var y = midY + (isPlayingNow ? Math.sin(k + phase) * Math.cos(k * 0.5 + phase * 0.8) * amp : 0)
+            var y = midY + Math.sin(k + phase * (0.8 + energy * 0.4)) * Math.cos(k * 0.5 + phase * 0.6) * amp
             if (x === 0) ctx.moveTo(x, y)
             else ctx.lineTo(x, y)
           }
           ctx.stroke()
 
-          if (isPlayingNow) {
-            ctx.lineWidth = 1.0
+          if (energy > 0.25) {
+            ctx.lineWidth = 0.9
             ctx.strokeStyle = root.bar ? root.bar.barForeground : Color.foreground
             ctx.beginPath()
             for (var x2 = 0; x2 <= width; x2 += 3) {
               var k2 = (x2 / width) * Math.PI * 3
-              var y2 = midY + Math.sin(k2 - phase * 1.3) * (amp * 0.65)
+              var y2 = midY + Math.sin(k2 - phase * 1.2) * (amp * 0.65)
               if (x2 === 0) ctx.moveTo(x2, y2)
               else ctx.lineTo(x2, y2)
             }
@@ -249,10 +258,10 @@ BarWidget {
           var numBars = root.showText ? 16 : 22
           var barW = (width / numBars) * 0.45
           var gap = (width / numBars) * 0.55
-          ctx.fillStyle = Color.accent
+          ctx.fillStyle = energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)
           for (var b = 0; b < numBars; b++) {
             var barFreq = Math.abs(Math.sin(phase * 2.0 + b * 0.75) * Math.cos(phase * 1.2 + b * 0.35))
-            var bh = isPlayingNow ? (barFreq * (height * (0.35 + intensity * 0.45)) + 3) : 2
+            var bh = (barFreq * (height * (0.15 + energy * (0.3 + intensity * 0.35))) + 2)
             var bx = b * (barW + gap) + gap / 2
             var by = midY - bh / 2
             ctx.fillRect(bx, by, barW, bh)
@@ -261,12 +270,12 @@ BarWidget {
           // 3. PULSING WAVE MATRIX BEADS
           var numDots = root.showText ? 14 : 18
           var step = width / (numDots + 1)
-          ctx.fillStyle = Color.accent
+          ctx.fillStyle = energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)
           for (var d = 1; d <= numDots; d++) {
             var dx = d * step
-            var dotOsc = Math.sin(phase * 2.2 + d * 0.6)
-            var dy = midY + (isPlayingNow ? dotOsc * (height * (0.2 + intensity * 0.2)) : 0)
-            var r = isPlayingNow ? (2.0 + (bassPulse * 1.2) + Math.cos(phase * 1.5 + d * 0.5) * 0.6) : 1.5
+            var dotOsc = Math.sin(phase * 2.0 + d * 0.6)
+            var dy = midY + dotOsc * (height * (0.08 + energy * (0.18 + intensity * 0.16)))
+            var r = (1.5 + (bassPulse * 1.0) + (energy * 0.8))
             ctx.beginPath()
             ctx.arc(dx, dy, r, 0, Math.PI * 2)
             ctx.fill()
@@ -275,24 +284,22 @@ BarWidget {
           // 4. FLOWING SOUND DUST / SPARKS
           var numParts = root.showText ? 12 : 16
           for (var pIdx = 0; pIdx < numParts; pIdx++) {
-            var speed = 28 + bassPulse * 14
-            var px = ((pIdx * speed + (phase / (Math.PI * 2)) * width) % width)
-            var py = midY + (isPlayingNow ? Math.sin(px * 0.08 + phase + pIdx) * (height * (0.22 + intensity * 0.18)) : 0)
-            ctx.fillStyle = (pIdx % 2 === 0) ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground)
+            var speed = 20 + energy * 20 + bassPulse * 10
+            var px = ((pIdx * 28 + (phase / (Math.PI * 2)) * width * (0.6 + energy * 0.6)) % width)
+            var py = midY + Math.sin(px * 0.08 + phase + pIdx) * (height * (0.08 + energy * (0.2 + intensity * 0.15)))
+            ctx.fillStyle = (pIdx % 2 === 0) ? (energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)) : (root.bar ? root.bar.barForeground : Color.foreground)
             ctx.beginPath()
-            ctx.arc(px, py, 1.8 + bassPulse * 0.8, 0, Math.PI * 2)
+            ctx.arc(px, py, 1.4 + energy * 0.8 + bassPulse * 0.6, 0, Math.PI * 2)
             ctx.fill()
           }
         } else if (mode === "pulse") {
           // 5. RHYTHMIC BREATHING AUDIO HEARTBEAT
-          if (isPlayingNow) {
-            var pulseScale = 0.4 + intensity * 0.6
-            var grad = ctx.createRadialGradient(width / 2, midY, 2, width / 2, midY, (width / 2) * pulseScale)
-            grad.addColorStop(0, Color.accent)
-            grad.addColorStop(1, "transparent")
-            ctx.fillStyle = grad
-            ctx.fillRect(0, 0, width, height)
-          }
+          var pulseScale = 0.25 + energy * (0.35 + intensity * 0.4)
+          var grad = ctx.createRadialGradient(width / 2, midY, 2, width / 2, midY, (width / 2) * pulseScale)
+          grad.addColorStop(0, energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.3))
+          grad.addColorStop(1, "transparent")
+          ctx.fillStyle = grad
+          ctx.fillRect(0, 0, width, height)
         }
       }
     }
