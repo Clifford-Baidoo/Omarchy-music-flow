@@ -7,7 +7,7 @@ import "MediaModel.js" as MediaModel
 
 BarWidget {
   id: root
-  moduleName: "custom.media"
+  moduleName: "nek0.media"
 
   property var service: null
   readonly property var mediaService: {
@@ -15,10 +15,10 @@ BarWidget {
     if (!root.bar || !root.bar.shell) return null
     if (root.moduleName && root.bar.shell.serviceFor(root.moduleName))
       return root.bar.shell.serviceFor(root.moduleName)
-    if (root.bar.shell.serviceFor("custom.media"))
-      return root.bar.shell.serviceFor("custom.media")
     if (root.bar.shell.serviceFor("nek0.media"))
       return root.bar.shell.serviceFor("nek0.media")
+    if (root.bar.shell.serviceFor("custom.media"))
+      return root.bar.shell.serviceFor("custom.media")
     if (root.bar.shell.serviceFor("omarchy.media"))
       return root.bar.shell.serviceFor("omarchy.media")
     if (root.bar.shell.firstPartyServiceFor("omarchy.media"))
@@ -26,7 +26,22 @@ BarWidget {
     return null
   }
 
-  readonly property var fallbackPlayers: Mpris.players ? Mpris.players.values : []
+  function deduplicatePlayers(players) {
+    var list = []
+    var seen = {}
+    var raw = players || []
+    for (var i = 0; i < raw.length; i++) {
+      var p = raw[i]
+      if (!p || MediaModel.isProxyPlayer(p)) continue
+      var key = MediaModel.playerKey(p)
+      if (!key || seen[key]) continue
+      seen[key] = true
+      if (MediaModel.hasMetadata(p)) list.push(p)
+    }
+    return list
+  }
+
+  readonly property var fallbackPlayers: deduplicatePlayers(Mpris.players ? Mpris.players.values : [])
 
   function findFallbackActivePlayer() {
     var list = fallbackPlayers || []
@@ -76,10 +91,7 @@ BarWidget {
   readonly property string artUrl: {
     if (mediaService && mediaService.artUrl) return mediaService.artUrl
     if (!activePlayer) return ""
-    if (activePlayer.trackArtUrl) return String(activePlayer.trackArtUrl)
-    if (activePlayer.metadata && (activePlayer.metadata["mpris:artUrl"] || activePlayer.metadata["xesam:artUrl"]))
-      return String(activePlayer.metadata["mpris:artUrl"] || activePlayer.metadata["xesam:artUrl"])
-    return ""
+    return MediaModel.extractArtUrl(activePlayer)
   }
 
   property bool popupOpen: false
