@@ -23,11 +23,12 @@ function hasTrackMetadata(player) {
 }
 
 function playerCanControl(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
+  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious || player.isStreamPlayer))
 }
 
 function canHandleAction(player, action) {
   if (!player) return false
+  if (player.isStreamPlayer) return true
   if (action === "next") return !!player.canGoNext
   if (action === "previous") return !!player.canGoPrevious
   if (action === "play") return !!(player.canPlay || player.canTogglePlaying)
@@ -326,17 +327,14 @@ function osdMessage(player, fallback) {
   return label || fallback
 }
 
-function findWindowTitleForPid(pid, appClass, toplevels) {
-  if (!toplevels || toplevels.length === 0) return ""
-  var pStr = String(pid || "")
+function findWindowTitleForApp(appIdentifier, toplevels) {
+  if (!toplevels || toplevels.length === 0 || !appIdentifier) return ""
   for (var i = 0; i < toplevels.length; i++) {
     var t = toplevels[i]
     if (!t) continue
-    if (pStr && String(t.pid || "") === pStr && t.title) {
-      return t.title
-    }
-    if (appClass && (t.waylandAppId === appClass || t.cls === appClass || t.class === appClass) && t.title) {
-      return t.title
+    var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
+    if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
+      if (t.title) return t.title
     }
   }
   return ""
@@ -346,7 +344,6 @@ function findWindowTitleForPid(pid, appClass, toplevels) {
 function createVirtualStreamPlayer(node, toplevels) {
   if (!node || isBlacklistedStream(node)) return null
   var p = nodeProps(node)
-  var pid = p["application.process.id"] || ""
   var binary = p["application.process.binary"] || ""
   var rawApp = p["application.name"] || node.description || p["node.name"] || node.name || "Audio Stream"
   
@@ -358,11 +355,10 @@ function createVirtualStreamPlayer(node, toplevels) {
     appName = "Zen Browser"
   }
 
-  // Look up actual window title from Hyprland
-  var winTitle = findWindowTitleForPid(pid, binary || rawApp, toplevels)
+  // Look up actual window title from Quickshell Wayland Toplevels
+  var winTitle = findWindowTitleForApp(binary || rawApp || appName, toplevels)
   var mediaName = p["media.name"] || node.description || ""
   
-  // Prefer window title if mediaName is generic (like "AudioStream", "playback", etc.)
   var resolvedTitle = cleanTitle(mediaName, appName)
   if (!resolvedTitle && winTitle) {
     resolvedTitle = cleanTitle(winTitle, appName)
@@ -422,7 +418,7 @@ if (typeof module !== "undefined") {
     sourceIcon: sourceIcon,
     labelFor: labelFor,
     osdMessage: osdMessage,
-    findWindowTitleForPid: findWindowTitleForPid,
+    findWindowTitleForApp: findWindowTitleForApp,
     createVirtualStreamPlayer: createVirtualStreamPlayer
   }
 }

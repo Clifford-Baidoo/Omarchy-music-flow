@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
-import Quickshell.Hyprland
+import Quickshell.Wayland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -17,7 +17,13 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
-  readonly property var toplevels: Hyprland.toplevels ? Hyprland.toplevels.values : []
+  readonly property var toplevels: {
+    try {
+      return ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
+    } catch (e) {
+      return []
+    }
+  }
 
   readonly property var playbackStreams: {
     var list = []
@@ -64,12 +70,12 @@ Item {
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     var cleaned = MediaModel.cleanTitle(t, a)
     if (!cleaned) {
-      // Fallback to Hyprland window title for the active player's desktop entry or identity
-      var winTitle = MediaModel.findWindowTitleForPid("", activePlayer.desktopEntry || activePlayer.identity, root.toplevels)
+      // Fallback to Wayland window title for the active player's desktop entry or identity
+      var winTitle = MediaModel.findWindowTitleForApp(activePlayer.desktopEntry || activePlayer.identity || activePlayer.appName || "", root.toplevels)
       if (winTitle) cleaned = MediaModel.cleanTitle(winTitle, a)
     }
     if (cleaned) return cleaned
-    return activePlayer.identity || activePlayer.desktopEntry || "Media Playing"
+    return activePlayer.identity || activePlayer.desktopEntry || activePlayer.appName || "Media Playing"
   }
 
   readonly property string artist: {
