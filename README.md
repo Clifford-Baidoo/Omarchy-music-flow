@@ -2,7 +2,7 @@
 
 A sleek, ricer-styled **Music Flow** widget and floating **Media Controller** for [Omarchy Linux](https://omarchy.org/) (Quickshell / Hyprland).
 
-Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your status bar and a **dedicated floating Player & Source Selector** panel window.
+Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your status bar and a **dedicated floating Player & Multi-Source Selector** window.
 
 ---
 
@@ -13,21 +13,24 @@ Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your s
 ![Omarchy Music Flow Bar](assets/bar-flow.png)
 
 ### 🎛️ Floating Player & Multi-Source Selector Panel
-*Dedicated floating media window with album artwork, playback deck, and one-click source switching (Spotify, YouTube / Browser, cliamp, etc.).*
+*Dedicated floating media window with album artwork, playback deck, and one-click source switching (Spotify, Zen / Firefox / Chrome, Seanime, MPV, cliamp, etc.).*
 ![Omarchy Music Player Panel](assets/player-panel.png)
 
 ---
 
 ## ✨ Features
 
-- 🎵 **Pure Soundwave Visualizer Flow**: Dual-layer harmonic wave oscillating horizontally across the status bar in real-time with your theme's accent color.
+- 🎵 **Pure Soundwave Visualizer Flow**: Dual-layer harmonic wave oscillating horizontally across the status bar in real-time with your theme's accent color whenever audio is active.
+- 🌐 **Universal Browser & Web Audio Support**: Fully picks up audio from **Zen Browser**, **Firefox**, **Brave**, **Google Chrome**, **Chromium**, and web services (**YouTube**, **SoundCloud**, **Twitch**, **Bandcamp**, **Netflix**, HTML5 media, and WebAudio).
+- 🌸 **Native Seanime & Anime Video Support**: Seamlessly tracks **Seanime** (both Desktop App and Web player), **MPV**, **VLC**, and **Celluloid** with automatic anime filename & tag cleaning (`[SubsPlease]`, `(1080p)`, etc.).
+- 🔊 **PipeWire Direct Stream Detection**: Automatically captures active audio streams even if an application does not natively implement MPRIS D-Bus.
 - 🎨 **Minimalist & Borderless**: Clean, transparent integration that seamlessly blends with your top bar without visual clutter.
 - 📜 **Smooth Marquee Scroll**: Track title and artist (`Title · Artist`) with initial pause and smooth scrolling when names are long.
 - 🎛️ **Dedicated Floating Media Player Panel**:
-  - High-resolution album artwork preview.
+  - High-resolution album artwork preview / source badge.
   - Track metadata (Title, Artist, Album, Source).
   - Comfortable playback controls (**Previous**, **Play / Pause**, **Next**).
-  - **Multi-Source Selector (`󱘖 SELECT PLAYER / SOURCE`)**: Instantly switch between running players (**Spotify**, **YouTube / Browser**, **cliamp**, **VLC**, etc.) with one click.
+  - **Multi-Source Selector (`󱘖 SELECT PLAYER / SOURCE`)**: Instantly switch between running players with one click.
 - 🗕 **Minimizable Compact Mode**: Collapses smoothly into a clean standalone status bar icon (**`󰝚`**) matching the battery and speaker widgets.
 - 🖱️ **Intuitive Gestures**:
   - **Left-Click**: Open/close the dedicated floating Player & Source Selector window.
@@ -41,7 +44,7 @@ Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your s
 Clone this repository and run the install script:
 
 ```bash
-git clone https://github.com/<your-username>/omarchy-music-flow.git
+git clone https://github.com/Clifford-Baidoo/omarchy-music-flow.git
 cd omarchy-music-flow
 chmod +x install.sh
 ./install.sh
@@ -49,8 +52,9 @@ chmod +x install.sh
 
 The installer will:
 1. Copy the plugin files to `~/.config/omarchy/plugins/custom.media/`.
-2. Automatically configure your bar layout in `~/.config/omarchy/shell.json`.
-3. Restart `omarchy-shell` to apply changes instantly.
+2. Automatically enable MPV MPRIS integration for video & Seanime playback.
+3. Automatically configure your bar layout in `~/.config/omarchy/shell.json`.
+4. Restart `omarchy-shell` to apply changes instantly.
 
 ---
 
@@ -99,7 +103,8 @@ omarchy-music-flow/
 ## 🛠️ Requirements
 
 - [Omarchy](https://omarchy.org/) (Arch Linux + Hyprland + Quickshell)
-- Any MPRIS-compatible media player (Spotify, Firefox / Zen / Chromium / Chrome, cliamp, VLC, Amberol, MPD, etc.)
+- PipeWire / WirePlumber
+- Any media source (Spotify, Zen, Firefox, Chrome, Brave, Seanime, MPV, cliamp, VLC, etc.)
 
 ---
 

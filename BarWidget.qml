@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Services.Mpris
 import qs.Ui
 import qs.Commons
+import "MediaModel.js" as MediaModel
 
 BarWidget {
   id: root
@@ -42,29 +43,30 @@ BarWidget {
   readonly property var activePlayer: mediaService && mediaService.activePlayer ? mediaService.activePlayer : findFallbackActivePlayer()
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
 
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(activePlayer.trackTitle || activePlayer.trackArtist) || Boolean(activePlayer.isPlaying) || Boolean(activePlayer.metadata && (activePlayer.metadata["xesam:title"] || activePlayer.metadata["xesam:artist"])))
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(activePlayer.isPlaying) || Boolean(activePlayer.isStreamPlayer) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
   readonly property string playIcon: activePlayer && activePlayer.isPlaying ? "󰏤" : "󰐊"
   
   readonly property string title: {
+    if (mediaService && mediaService.title) return mediaService.title
     if (!activePlayer) return ""
-    if (activePlayer.trackTitle) return String(activePlayer.trackTitle)
-    if (activePlayer.metadata && activePlayer.metadata["xesam:title"]) return String(activePlayer.metadata["xesam:title"])
+    var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
+    var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
+    if (t) return MediaModel.cleanTitle(t, a)
     if (activePlayer.identity) return String(activePlayer.identity)
     if (activePlayer.desktopEntry) return String(activePlayer.desktopEntry)
     return "Playing"
   }
 
   readonly property string artist: {
+    if (mediaService && mediaService.artist) return mediaService.artist
     if (!activePlayer) return ""
-    if (activePlayer.trackArtist) return String(activePlayer.trackArtist)
-    if (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) {
-      var a = activePlayer.metadata["xesam:artist"]
-      return Array.isArray(a) ? a.join(", ") : String(a)
-    }
-    return ""
+    var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
+    var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
+    return MediaModel.cleanArtist(a, t, activePlayer)
   }
 
   readonly property string album: {
+    if (mediaService && mediaService.album) return mediaService.album
     if (!activePlayer) return ""
     if (activePlayer.trackAlbum) return String(activePlayer.trackAlbum)
     if (activePlayer.metadata && activePlayer.metadata["xesam:album"]) return String(activePlayer.metadata["xesam:album"])
@@ -72,6 +74,7 @@ BarWidget {
   }
 
   readonly property string artUrl: {
+    if (mediaService && mediaService.artUrl) return mediaService.artUrl
     if (!activePlayer) return ""
     if (activePlayer.trackArtUrl) return String(activePlayer.trackArtUrl)
     if (activePlayer.metadata && (activePlayer.metadata["mpris:artUrl"] || activePlayer.metadata["xesam:artUrl"]))
@@ -88,7 +91,7 @@ BarWidget {
   function playerKey(player) {
     if (!player) return ""
     if (mediaService && typeof mediaService.playerKey === "function") return mediaService.playerKey(player)
-    return String(player.dbusName || player.desktopEntry || player.identity || "")
+    return MediaModel.playerKey(player)
   }
 
   function runAction(action, targetPlayer) {
@@ -99,7 +102,8 @@ BarWidget {
       return
     }
     if (action === "playPause") {
-      if (typeof p.playPause === "function") p.playPause()
+      if (typeof p.togglePlaying === "function") p.togglePlaying()
+      else if (typeof p.playPause === "function") p.playPause()
       else if (p.isPlaying && typeof p.pause === "function") p.pause()
       else if (typeof p.play === "function") p.play()
     } else if (action === "next" && typeof p.next === "function") {
@@ -119,32 +123,11 @@ BarWidget {
   }
 
   function sourceName(player) {
-    if (!player) return "Media"
-    var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
-    if (id.indexOf("spotify") !== -1) return "Spotify"
-    if (id.indexOf("seanime") !== -1) return "Seanime"
-    if (id.indexOf("mpv") !== -1) return "MPV"
-    if (id.indexOf("vlc") !== -1) return "VLC"
-    if (id.indexOf("firefox") !== -1) return "Firefox"
-    if (id.indexOf("zen") !== -1) return "Zen"
-    if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1) return "Browser"
-    if (id.indexOf("cliamp") !== -1) return "cliamp"
-    if (id.indexOf("stremio") !== -1) return "Stremio"
-    if (id.indexOf("celluloid") !== -1) return "Celluloid"
-    return player.identity || player.desktopEntry || "Player"
+    return MediaModel.sourceName(player)
   }
 
   function sourceIcon(player) {
-    if (!player) return "󰝚"
-    var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
-    if (id.indexOf("spotify") !== -1) return "󰓇"
-    if (id.indexOf("seanime") !== -1) return "󰚩"
-    if (id.indexOf("mpv") !== -1) return "󰐹"
-    if (id.indexOf("vlc") !== -1) return "󰕼"
-    if (id.indexOf("firefox") !== -1 || id.indexOf("zen") !== -1 || id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1) return "󰗃"
-    if (id.indexOf("cliamp") !== -1) return "󰎆"
-    if (id.indexOf("stremio") !== -1 || id.indexOf("celluloid") !== -1 || id.indexOf("video") !== -1) return "󰐹"
-    return "󰝚"
+    return MediaModel.sourceIcon(player)
   }
 
   visible: true
@@ -489,7 +472,7 @@ BarWidget {
           foreground: root.bar ? root.bar.foreground : Color.foreground
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer && root.activePlayer.canGoPrevious
+          enabled: Boolean(root.activePlayer && root.activePlayer.canGoPrevious)
           opacity: enabled ? 1.0 : 0.4
           onClicked: root.runAction("previous", root.activePlayer)
         }
@@ -500,7 +483,7 @@ BarWidget {
           horizontalPadding: Style.spacing.panelGap
           verticalPadding: Style.spacing.controlPaddingY
           iconSize: Style.font.iconLarge
-          enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
+          enabled: Boolean(root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause || root.activePlayer.isStreamPlayer))
           opacity: enabled ? 1.0 : 0.4
           onClicked: root.runAction("playPause", root.activePlayer)
         }
@@ -510,7 +493,7 @@ BarWidget {
           foreground: root.bar ? root.bar.foreground : Color.foreground
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer && root.activePlayer.canGoNext
+          enabled: Boolean(root.activePlayer && root.activePlayer.canGoNext)
           opacity: enabled ? 1.0 : 0.4
           onClicked: root.runAction("next", root.activePlayer)
         }
@@ -570,8 +553,19 @@ BarWidget {
               && root.playerKey(root.activePlayer) === root.playerKey(player)
             readonly property string name: root.sourceName(player)
             readonly property string icon: root.sourceIcon(player)
-            readonly property string track: player ? (player.trackTitle || player.identity || "Active Player") : "Active Player"
-            readonly property string artistName: player && player.trackArtist ? player.trackArtist : ""
+            readonly property string track: {
+              if (!player) return "Active Player"
+              var t = player.trackTitle || (player.metadata && player.metadata["xesam:title"]) || ""
+              var a = player.trackArtist || (player.metadata && player.metadata["xesam:artist"]) || ""
+              if (t) return MediaModel.cleanTitle(t, a)
+              return player.identity || player.appName || "Active Player"
+            }
+            readonly property string artistName: {
+              if (!player) return ""
+              var t = player.trackTitle || (player.metadata && player.metadata["xesam:title"]) || ""
+              var a = player.trackArtist || (player.metadata && player.metadata["xesam:artist"]) || ""
+              return MediaModel.cleanArtist(a, t, player)
+            }
 
             width: parent.width
             height: Style.space(42)
@@ -615,7 +609,7 @@ BarWidget {
                 }
 
                 Text {
-                  text: sourceRow.track + (sourceRow.artistName ? " — " + sourceRow.artistName : "")
+                  text: sourceRow.track + (sourceRow.artistName && sourceRow.artistName !== sourceRow.name ? " — " + sourceRow.artistName : "")
                   color: sourceRow.selected ? (root.bar ? root.bar.foreground : Color.foreground) : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.5)
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption

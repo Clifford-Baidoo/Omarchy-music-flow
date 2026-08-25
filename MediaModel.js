@@ -1,3 +1,7 @@
+// ==============================================================================
+// MediaModel.js - Music Flow Intelligent Media & Stream Resolver
+// ==============================================================================
+
 function isProxyPlayer(player) {
   var dbusName = String(player && player.dbusName || "").toLowerCase()
   var desktopEntry = String(player && player.desktopEntry || "").toLowerCase()
@@ -5,11 +9,17 @@ function isProxyPlayer(player) {
 }
 
 function hasMetadata(player) {
-  return !!(player && (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry))
+  if (!player) return false
+  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry) return true
+  if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"])) return true
+  return false
 }
 
 function hasTrackMetadata(player) {
-  return !!(player && (player.trackTitle || player.trackArtist || player.trackAlbum || player.trackArtUrl))
+  if (!player) return false
+  if (player.trackTitle || player.trackArtist || player.trackAlbum || player.trackArtUrl) return true
+  if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"] || player.metadata["mpris:artUrl"])) return true
+  return false
 }
 
 function playerCanControl(player) {
@@ -27,18 +37,18 @@ function canHandleAction(player, action) {
 }
 
 function canCycleSource(player) {
-  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay))
+  return !!(player && (hasMetadata(player) || player.isStreamPlayer) && (player.isPlaying || player.canPlay))
 }
 
 function nodeProps(node) {
-  return node && node.ready && node.properties ? node.properties : {}
+  return node && node.ready && node.properties ? node.properties : (node && node.properties ? node.properties : {})
 }
 
 function isPlaybackStream(node) {
   if (!node || !node.isStream) return false
   if (node.isSink === true) return true
 
-  var mediaClass = String(node.type || "")
+  var mediaClass = String(node.type || (node.properties && node.properties["media.class"]) || "")
   return mediaClass.indexOf("Stream/Output/Audio") !== -1
     || mediaClass.indexOf("AudioOutStream") !== -1
     || mediaClass.indexOf("Output") !== -1
@@ -59,30 +69,78 @@ function rawStreamLabel(node) {
   return p["application.name"]
     || node.description
     || p["media.name"]
+    || p["application.process.binary"]
     || p["node.name"]
     || node.name
+    || ""
+}
+
+// Known browser & application families for cross-matching MPRIS & Pipewire
+var APP_FAMILY_MAP = {
+  "firefox": ["firefox", "zen", "zen-bin", "librewolf", "floorp", "waterfox", "tor-browser", "gecko"],
+  "zen": ["zen", "zen-bin", "firefox", "gecko"],
+  "librewolf": ["librewolf", "firefox", "gecko"],
+  "chromium": ["chromium", "chrome", "google-chrome", "google-chrome-stable", "brave", "brave-browser", "edge", "microsoft-edge", "opera", "vivaldi", "electron", "seanime", "seanime-denshi"],
+  "chrome": ["chrome", "google-chrome", "google-chrome-stable", "chromium"],
+  "brave": ["brave", "brave-browser", "chromium"],
+  "seanime": ["seanime", "seanime-denshi", "seanime-server", "denshi", "electron", "chromium"],
+  "spotify": ["spotify", "spotify-launcher", "spotify-client"],
+  "mpv": ["mpv", "mpv-mpris", "celluloid"],
+  "vlc": ["vlc"]
+}
+
+function normalizeAppName(name) {
+  var s = String(name || "").toLowerCase()
+  s = s.replace(/^org\.mpris\.mediaplayer2\./, "")
+  s = s.replace(/\.instance.*$/, "")
+  s = s.replace(/[^a-z0-9]/g, "")
+  return s
+}
+
+function areAppsInSameFamily(nameA, nameB) {
+  var a = normalizeAppName(nameA)
+  var b = normalizeAppName(nameB)
+  if (!a || !b) return false
+  if (a === b || a.indexOf(b) !== -1 || b.indexOf(a) !== -1) return true
+
+  for (var family in APP_FAMILY_MAP) {
+    var members = APP_FAMILY_MAP[family]
+    var aInFamily = members.some(function(m) { return a.indexOf(normalizeAppName(m)) !== -1 })
+    var bInFamily = members.some(function(m) { return b.indexOf(normalizeAppName(m)) !== -1 })
+    if (aInFamily && bInFamily) return true
+  }
+
+  return false
 }
 
 function playerAppLabel(player) {
   if (!player) return ""
   var dbus = String(player.dbusName || "")
   dbus = dbus.replace(/^org\.mpris\.MediaPlayer2\./, "")
-  dbus = dbus.replace(/\.instance[0-9]+$/, "")
+  dbus = dbus.replace(/\.instance.*$/, "")
   return player.desktopEntry || player.identity || dbus
 }
 
 function playerHasPlaybackStream(player, playbackStreams) {
-  var playerKey = streamLabelKey(playerAppLabel(player))
-  if (!playerKey) return false
+  if (!player) return false
+  var pLabel = playerAppLabel(player)
+  var pKey = streamLabelKey(pLabel)
+  var pDbus = String(player.dbusName || "")
 
   var streams = Array.isArray(playbackStreams) ? playbackStreams : []
   for (var i = 0; i < streams.length; i++) {
-    var streamKey = streamLabelKey(rawStreamLabel(streams[i]))
-    if (!streamKey) continue
-    if (streamKey === playerKey
-        || streamKey.indexOf(playerKey) !== -1
-        || playerKey.indexOf(streamKey) !== -1)
-      return true
+    var sNode = streams[i]
+    if (!sNode) continue
+    var sLabel = rawStreamLabel(sNode)
+    var sKey = streamLabelKey(sLabel)
+    if (!sKey) continue
+
+    if (sKey === pKey || sKey.indexOf(pKey) !== -1 || pKey.indexOf(sKey) !== -1) return true
+    if (areAppsInSameFamily(pLabel, sLabel) || areAppsInSameFamily(pDbus, sLabel)) return true
+
+    var p = nodeProps(sNode)
+    var binary = String(p["application.process.binary"] || "")
+    if (binary && (areAppsInSameFamily(pLabel, binary) || areAppsInSameFamily(pDbus, binary))) return true
   }
 
   return false
@@ -90,7 +148,7 @@ function playerHasPlaybackStream(player, playbackStreams) {
 
 function playerKey(player) {
   if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || "")
+  return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
 }
 
 function trackSignature(player) {
@@ -107,9 +165,117 @@ function trackChanged(previousSignature, player) {
   return trackSignature(player) !== String(previousSignature || "")
 }
 
+// Cleans up common ugly tags from web/video players (e.g. YouTube, anime filenames, web sites)
+function cleanTitle(rawTitle, rawArtist) {
+  var title = String(rawTitle || "").trim()
+  if (!title) return ""
+
+  // 1. Remove common website suffixes first
+  title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
+
+  // 2. Remove Anime Release Group tags: [SubsPlease], [Erai-raws], [Judas], etc.
+  title = title.replace(/^\[[^\]]+\]\s*/g, "")
+  title = title.replace(/\s*\[[0-9a-fA-F]{8}\]/g, "") // CRC32 hashes like [ABCD1234]
+  title = title.replace(/\s*\[(?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\]/gi, "")
+  title = title.replace(/\s*\((?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\)/gi, "")
+
+  // 3. Remove file extensions
+  title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
+
+  // 4. If title is "Artist - Song", but NOT an episode number like "Anime - 01" or "Show - Ep 2"
+  if (!rawArtist && title.indexOf(" - ") !== -1) {
+    var parts = title.split(" - ")
+    if (parts.length === 2) {
+      var left = parts[0].trim()
+      var right = parts[1].trim()
+      var isEpisode = /^(?:ep|episode|part|vol|v)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
+      if (!isEpisode && left.length > 1 && right.length > 1) {
+        return right
+      }
+    }
+  }
+
+  return title.trim()
+}
+
+// Derives a clean artist or source badge
+function cleanArtist(rawArtist, rawTitle, player) {
+  var artist = ""
+  if (rawArtist) {
+    if (Array.isArray(rawArtist)) artist = rawArtist.join(", ")
+    else artist = String(rawArtist).trim()
+  }
+
+  if (artist && artist !== "Unknown" && artist !== "undefined") return artist
+
+  // If artist is missing, check if title had "Artist - Title"
+  var title = String(rawTitle || "").trim()
+  title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
+
+  if (title.indexOf(" - ") !== -1) {
+    var parts = title.split(" - ")
+    if (parts.length === 2) {
+      var left = parts[0].trim()
+      var right = parts[1].trim()
+      var isEpisode = /^(?:ep|episode|part|vol|v)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
+      if (!isEpisode && left.length > 1 && right.length > 1) {
+        return left
+      }
+    }
+  }
+
+  // Fallback to app source name
+  var src = sourceName(player)
+  if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
+
+  return ""
+}
+
+function sourceName(player) {
+  if (!player) return "Media"
+  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
+  if (id.indexOf("spotify") !== -1) return "Spotify"
+  if (id.indexOf("seanime") !== -1 || id.indexOf("denshi") !== -1) return "Seanime"
+  if (id.indexOf("mpv") !== -1) return "MPV"
+  if (id.indexOf("vlc") !== -1) return "VLC"
+  if (id.indexOf("zen") !== -1) return "Zen Browser"
+  if (id.indexOf("firefox") !== -1) return "Firefox"
+  if (id.indexOf("brave") !== -1) return "Brave"
+  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return "Chrome"
+  if (id.indexOf("edge") !== -1) return "Edge"
+  if (id.indexOf("cliamp") !== -1) return "cliamp"
+  if (id.indexOf("stremio") !== -1) return "Stremio"
+  if (id.indexOf("celluloid") !== -1) return "Celluloid"
+  if (id.indexOf("discord") !== -1) return "Discord"
+  if (id.indexOf("twitch") !== -1) return "Twitch"
+  if (id.indexOf("soundcloud") !== -1) return "SoundCloud"
+  if (player.identity && player.identity !== "undefined") return player.identity
+  if (player.desktopEntry && player.desktopEntry !== "undefined") return player.desktopEntry
+  return "Player"
+}
+
+function sourceIcon(player) {
+  if (!player) return "󰝚"
+  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
+  if (id.indexOf("spotify") !== -1) return "󰓇"
+  if (id.indexOf("seanime") !== -1 || id.indexOf("denshi") !== -1) return "󰚩"
+  if (id.indexOf("mpv") !== -1) return "󰐹"
+  if (id.indexOf("vlc") !== -1) return "󰕼"
+  if (id.indexOf("zen") !== -1 || id.indexOf("firefox") !== -1) return "󰈹"
+  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1 || id.indexOf("edge") !== -1) return "󰊯"
+  if (id.indexOf("cliamp") !== -1) return "󰎆"
+  if (id.indexOf("stremio") !== -1 || id.indexOf("celluloid") !== -1) return "󰐹"
+  if (id.indexOf("discord") !== -1) return "󰙯"
+  if (id.indexOf("twitch") !== -1) return "󰕧"
+  if (id.indexOf("soundcloud") !== -1) return "󰝚"
+  return "󰝚"
+}
+
 function labelFor(player) {
   if (!player) return ""
-  return player.trackTitle || player.identity || player.desktopEntry || ""
+  return player.trackTitle || player.identity || player.desktopEntry || sourceName(player) || ""
 }
 
 function osdMessage(player, fallback) {
@@ -117,6 +283,36 @@ function osdMessage(player, fallback) {
   var label = labelFor(player)
   if (label && player.trackArtist) return label + " - " + player.trackArtist
   return label || fallback
+}
+
+// Virtual player wrapper created from an active Pipewire audio stream when no MPRIS player exists
+function createVirtualStreamPlayer(node) {
+  if (!node) return null
+  var p = nodeProps(node)
+  var appName = p["application.name"] || node.description || p["node.name"] || node.name || "Audio Stream"
+  var mediaName = p["media.name"] || node.description || "Playback"
+
+  return {
+    isStreamPlayer: true,
+    streamId: String(node.id || node.name || appName),
+    dbusName: "pipewire.stream." + (node.id || node.name || appName),
+    identity: appName,
+    desktopEntry: p["application.process.binary"] || p["application.name"] || "",
+    appName: appName,
+    trackTitle: cleanTitle(mediaName, appName),
+    trackArtist: cleanArtist("", mediaName, { appName: appName, identity: appName }),
+    trackAlbum: "",
+    trackArtUrl: "",
+    isPlaying: Boolean(node.audio && !node.audio.muted),
+    canPlay: true,
+    canPause: true,
+    canTogglePlaying: true,
+    canGoNext: false,
+    canGoPrevious: false,
+    play: function() { if (node.audio) node.audio.muted = false },
+    pause: function() { if (node.audio) node.audio.muted = true },
+    togglePlaying: function() { if (node.audio) node.audio.muted = !node.audio.muted }
+  }
 }
 
 if (typeof module !== "undefined") {
@@ -131,12 +327,19 @@ if (typeof module !== "undefined") {
     isPlaybackStream: isPlaybackStream,
     streamLabelKey: streamLabelKey,
     rawStreamLabel: rawStreamLabel,
+    normalizeAppName: normalizeAppName,
+    areAppsInSameFamily: areAppsInSameFamily,
     playerAppLabel: playerAppLabel,
     playerHasPlaybackStream: playerHasPlaybackStream,
     playerKey: playerKey,
     trackSignature: trackSignature,
     trackChanged: trackChanged,
+    cleanTitle: cleanTitle,
+    cleanArtist: cleanArtist,
+    sourceName: sourceName,
+    sourceIcon: sourceIcon,
     labelFor: labelFor,
-    osdMessage: osdMessage
+    osdMessage: osdMessage,
+    createVirtualStreamPlayer: createVirtualStreamPlayer
   }
 }
