@@ -3,7 +3,8 @@
   "id": "custom.media",
   "name": "Music Flow",
   "version": "1.0.0",
-  "author": "Omarchy Community",
+  "author": "Clifford Baidoo",
+  "license": "MIT",
   "description": "MPRIS media visualizer and player controller",
   "kinds": [
     "service",
