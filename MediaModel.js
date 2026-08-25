@@ -77,9 +77,28 @@ function isBlacklistedStream(node) {
 
 function isPlaybackStream(node) {
   if (!node || !node.isStream || isBlacklistedStream(node)) return false
+  var p = nodeProps(node)
+
+  // 1. Filter out notification/event/alert/system sound effects
+  var role = String(p["media.role"] || p["node.role"] || "").toLowerCase()
+  if (role === "event" || role === "notification" || role === "alert" || role === "test" || role === "sound-effect") {
+    return false
+  }
+
+  // 2. Filter out Discord & transient message notification sounds
+  var mediaName = String(p["media.name"] || "").toLowerCase()
+  if (mediaName.indexOf("notification") !== -1 || mediaName.indexOf("alert") !== -1 || mediaName.indexOf("message") !== -1 || mediaName.indexOf("ping") !== -1) {
+    return false
+  }
+
+  var appName = String(p["application.name"] || p["application.process.binary"] || "").toLowerCase()
+  if (appName.indexOf("discord") !== -1 && role !== "music" && mediaName.indexOf("music") === -1) {
+    return false
+  }
+
   if (node.isSink === true) return true
 
-  var mediaClass = String(node.type || (node.properties && node.properties["media.class"]) || "")
+  var mediaClass = String(node.type || p["media.class"] || "")
   return mediaClass.indexOf("Stream/Output/Audio") !== -1
     || mediaClass.indexOf("AudioOutStream") !== -1
     || mediaClass.indexOf("Output") !== -1
@@ -386,9 +405,15 @@ function createVirtualStreamPlayer(node, toplevels) {
     canTogglePlaying: true,
     canGoNext: false,
     canGoPrevious: false,
-    play: function() { if (node.audio) node.audio.muted = false },
-    pause: function() { if (node.audio) node.audio.muted = true },
-    togglePlaying: function() { if (node.audio) node.audio.muted = !node.audio.muted }
+    play: function() {
+      if (node.audio) node.audio.muted = false
+    },
+    pause: function() {
+      if (node.audio) node.audio.muted = true
+    },
+    togglePlaying: function() {
+      if (node.audio) node.audio.muted = !node.audio.muted
+    }
   }
 }
 

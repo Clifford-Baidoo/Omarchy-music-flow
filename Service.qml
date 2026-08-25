@@ -41,17 +41,17 @@ Item {
       var s = playbackStreams[i]
       if (!s) continue
       var sLabel = rawStreamLabel(s)
-      var hasMpris = false
+      var hasActivePlayingMpris = false
       for (var j = 0; j < players.length; j++) {
         var p = players[j]
         if (!p) continue
         var pLabel = playerAppLabel(p)
-        if (MediaModel.areAppsInSameFamily(pLabel, sLabel)) {
-          hasMpris = true
+        if (MediaModel.areAppsInSameFamily(pLabel, sLabel) && p.isPlaying) {
+          hasActivePlayingMpris = true
           break
         }
       }
-      if (!hasMpris) {
+      if (!hasActivePlayingMpris) {
         var vp = MediaModel.createVirtualStreamPlayer(s, root.toplevels)
         if (vp) list.push(vp)
       }
@@ -69,10 +69,12 @@ Item {
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     var cleaned = MediaModel.cleanTitle(t, a)
-    if (!cleaned) {
-      // Fallback to Wayland window title for the active player's desktop entry or identity
+    if (!cleaned || activePlayer.isStreamPlayer) {
       var winTitle = MediaModel.findWindowTitleForApp(activePlayer.desktopEntry || activePlayer.identity || activePlayer.appName || "", root.toplevels)
-      if (winTitle) cleaned = MediaModel.cleanTitle(winTitle, a)
+      if (winTitle) {
+        var winClean = MediaModel.cleanTitle(winTitle, a)
+        if (winClean) cleaned = winClean
+      }
     }
     if (cleaned) return cleaned
     return activePlayer.identity || activePlayer.desktopEntry || activePlayer.appName || "Media Playing"
@@ -270,22 +272,22 @@ Item {
     var playingMprisWithStream = oldestPlayingPlayer(true)
     if (playingMprisWithStream) return playingMprisWithStream
 
-    // 3. Currently playing MPRIS player
-    var playingMpris = oldestPlayingPlayer(false)
-    if (playingMpris) return playingMpris
-
-    // 4. Currently playing PipeWire stream (Seanime, dulo.gd, web stream)
+    // 3. Currently playing PipeWire stream (Seanime, dulo.gd, web stream)
     for (var s = 0; s < streamPlayers.length; s++) {
       if (streamPlayers[s] && streamPlayers[s].isPlaying) return streamPlayers[s]
     }
 
+    // 4. Currently playing MPRIS player
+    var playingMpris = oldestPlayingPlayer(false)
+    if (playingMpris) return playingMpris
+
     // 5. Fallbacks
+    if (streamPlayers.length > 0) return streamPlayers[0]
     if (players.length > 0) {
       for (var i = 0; i < players.length; i++) {
         if (hasMetadata(players[i])) return players[i]
       }
     }
-    if (streamPlayers.length > 0) return streamPlayers[0]
 
     return null
   }
@@ -486,6 +488,9 @@ Item {
         player.togglePlaying()
         handled = true
       }
+      if (player && player.isStreamPlayer) {
+        Quickshell.execDetached(["wtype", "-k", "space"])
+      }
     } else if (action === "pause") {
       actionLabel = "Pause"
       iconName = "media-pause"
@@ -498,6 +503,9 @@ Item {
       } else if (player && player.canTogglePlaying && player.isPlaying) {
         player.togglePlaying()
         handled = true
+      }
+      if (player && player.isStreamPlayer) {
+        Quickshell.execDetached(["wtype", "-k", "space"])
       }
     } else if (action === "playPause") {
       actionLabel = player && player.isPlaying ? "Pause" : "Play"
@@ -514,6 +522,9 @@ Item {
       } else if (player && player.canTogglePlaying) {
         player.togglePlaying()
         handled = true
+      }
+      if (player && player.isStreamPlayer) {
+        Quickshell.execDetached(["wtype", "-k", "space"])
       }
     }
 

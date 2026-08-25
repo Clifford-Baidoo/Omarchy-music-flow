@@ -297,7 +297,7 @@ BarWidget {
             id: sepText
             visible: root.artist !== ""
             text: "·"
-            color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.5)
+            color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.5)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             anchors.verticalCenter: parent.verticalCenter
