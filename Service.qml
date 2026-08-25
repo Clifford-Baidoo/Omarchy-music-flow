@@ -10,6 +10,7 @@ Item {
 
   property var shell: null
   property string preferredPlayerKey: ""
+  property string lastActivePlayerKey: ""
   property var playerStartedAt: ({})
   property var pendingTrackOsd: null
   property int playSerial: 0
@@ -31,27 +32,27 @@ Item {
 
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
-  // playbackVersion + preferredPlayerKey are explicit QML dependencies here.
-  // playbackVersion changes whenever any player emits playbackStateChanged (via
-  // the Instantiator below), so activePlayer re-evaluates on every pause/resume.
+  // playerStartedAt changes every time syncPlayingOrder() runs (it writes playerStartedAt = next).
+  // syncPlayingOrder() is called on every onIsPlayingChanged (via Instantiator below) and on
+  // onPlayersChanged. So activePlayer re-evaluates automatically on every pause/resume/switch.
+  // playbackVersion, preferredPlayerKey, and lastActivePlayerKey are also read.
   readonly property var activePlayer: {
-    var _v = playbackVersion
+    var _ps = playerStartedAt  // re-evaluate when any player's playing state changes
+    var _pv = playbackVersion
     var _pk = preferredPlayerKey
+    var _lk = lastActivePlayerKey
     return selectActivePlayer()
   }
 
-  // isPlaying reads activePlayer.isPlaying. Since activePlayer re-evaluates on
-  // every playbackVersion bump, this is always current.
-  readonly property bool isPlaying: {
-    if (!activePlayer) return false
-    var playing = activePlayer.isPlaying
-    if (playing) return true
-    return MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
-  }
+  // isPlaying reads activePlayer.isPlaying directly — a real QML property access.
+  // When activePlayer switches (e.g. Spotify→YouTube), this re-evaluates immediately.
+  // When the current player pauses/resumes, activePlayer.isPlaying notifies this binding.
+  readonly property bool isPlaying: (activePlayer && activePlayer.isPlaying) || false
 
   // Per-player signal connections — use Mpris.players (UntypedObjectModel) directly
   // as the Instantiator model so Qt creates one Connections delegate per player.
-  // root.players (.values) is a plain JS array which Instantiator cannot iterate.
+  // Wire all relevant MprisPlayer notify signals so any change in state, track, or
+  // metadata causes immediate UI updates.
   Instantiator {
     model: Mpris.players
     delegate: Connections {
@@ -61,7 +62,23 @@ Item {
         root.syncPlayingOrder()
         root.playbackVersion++
       }
-      function onTrackChanged() {
+      function onPlaybackStateChanged() {
+        root.syncPlayingOrder()
+        root.playbackVersion++
+      }
+      function onMetadataChanged() {
+        root.playbackVersion++
+      }
+      function onTrackTitleChanged() {
+        root.playbackVersion++
+      }
+      function onTrackArtistChanged() {
+        root.playbackVersion++
+      }
+      function onTrackAlbumChanged() {
+        root.playbackVersion++
+      }
+      function onTrackArtUrlChanged() {
         root.playbackVersion++
       }
     }
@@ -177,8 +194,7 @@ Item {
       if (!key) continue
 
       alive[key] = true
-      var isPlay = p.isPlaying || playerHasActiveStream(p)
-      if (!isPlay) continue
+      if (!p.isPlaying) continue
 
       if (playerStartedAt[key] === undefined) {
         serial += 1
@@ -189,6 +205,7 @@ Item {
     }
 
     if (preferredPlayerKey && !alive[preferredPlayerKey]) preferredPlayerKey = ""
+    if (lastActivePlayerKey && !alive[lastActivePlayerKey]) lastActivePlayerKey = ""
 
     playSerial = serial
     playerStartedAt = next
@@ -210,11 +227,11 @@ Item {
     }
 
     list.sort(function(a, b) {
-      var aPlay = a.isPlaying || playerHasActiveStream(a)
-      var bPlay = b.isPlaying || playerHasActiveStream(b)
-      if (!!aPlay !== !!bPlay) return aPlay ? -1 : 1
+      var aPlay = Boolean(a.isPlaying)
+      var bPlay = Boolean(b.isPlaying)
+      if (aPlay !== bPlay) return aPlay ? -1 : 1
       if (aPlay && bPlay) {
-        var orderDelta = playerOrder(a, 1000) - playerOrder(b, 1000)
+        var orderDelta = playerOrder(b, 0) - playerOrder(a, 0)
         if (orderDelta !== 0) return orderDelta
       }
       return labelFor(a).localeCompare(labelFor(b))
@@ -241,73 +258,73 @@ Item {
     return list
   }
 
-  function oldestPlayingPlayer(requirePlaybackStream) {
-    var oldest = null
-    var oldestOrder = 0
+  function mostRecentPlayingPlayer() {
+    var newest = null
+    var newestOrder = -1
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
 
-      var isPlay = p.isPlaying || playerHasActiveStream(p)
-      if (isPlay) {
-        if (requirePlaybackStream && !playerHasPlaybackStream(p)) continue
-
-        var order = playerOrder(p, i + 1000)
-        if (!oldest || order < oldestOrder) {
-          oldest = p
-          oldestOrder = order
+      if (p.isPlaying) {
+        var order = playerOrder(p, i + 1)
+        if (!newest || order > newestOrder) {
+          newest = p
+          newestOrder = order
         }
       }
     }
 
-    return oldest || null
+    return newest || null
   }
 
   function selectActivePlayer() {
-    // 1. User explicitly selected a preferred player — BUT only stick to it
-    //    if it is currently playing. If a different player starts playing,
-    //    auto-yield to the newly-playing player.
+    // 1. User explicitly selected a preferred player
     if (preferredPlayerKey) {
       var preferred = playerForKey(preferredPlayerKey)
       if (preferred && hasMetadata(preferred)) {
-        var preferredIsPlaying = preferred.isPlaying || playerHasActiveStream(preferred)
-        if (preferredIsPlaying) {
-          // Preferred player is still playing — keep it
+        if (preferred.isPlaying) {
+          lastActivePlayerKey = preferredPlayerKey
           return preferred
         }
-        // Preferred player is paused — check if any OTHER player started playing
-        var anyOtherPlaying = false
-        for (var j = 0; j < players.length; j++) {
-          var candidate = players[j]
-          if (!candidate || isProxyPlayer(candidate)) continue
-          if (playerCanonicalKey(candidate) === preferredPlayerKey) continue
-          if (candidate.isPlaying || playerHasActiveStream(candidate)) {
-            anyOtherPlaying = true
-            break
-          }
+        // Preferred player is paused — check if any OTHER player is actively playing
+        var otherPlaying = mostRecentPlayingPlayer()
+        if (otherPlaying) {
+          // A different player is actively playing — switch to the actively playing player
+          preferredPlayerKey = ""
+          var k = playerCanonicalKey(otherPlaying)
+          if (k) lastActivePlayerKey = k
+          return otherPlaying
         }
-        if (!anyOtherPlaying) {
-          // Nothing else is playing — keep showing the paused preferred player
-          return preferred
-        }
-        // Something else started playing — clear preference and auto-switch
-        preferredPlayerKey = ""
+        // Nothing else is playing — keep showing the preferred player (paused)
+        return preferred
       }
     }
 
-    // 2. Currently playing MPRIS player with matching PipeWire audio stream
-    var playingMprisWithStream = oldestPlayingPlayer(true)
-    if (playingMprisWithStream) return playingMprisWithStream
+    // 2. Currently playing player (picks most recently started)
+    var playingPlayer = mostRecentPlayingPlayer()
+    if (playingPlayer) {
+      var pk = playerCanonicalKey(playingPlayer)
+      if (pk) lastActivePlayerKey = pk
+      return playingPlayer
+    }
 
-    // 3. Currently playing MPRIS player
-    var playingMpris = oldestPlayingPlayer(false)
-    if (playingMpris) return playingMpris
+    // 3. Nothing is currently playing: stick to last active player if still available
+    if (lastActivePlayerKey) {
+      var last = playerForKey(lastActivePlayerKey)
+      if (last && hasMetadata(last)) {
+        return last
+      }
+    }
 
     // 4. Fallback: first available non-proxy player with metadata
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (p && !isProxyPlayer(p) && hasMetadata(p)) return p
+      if (p && !isProxyPlayer(p) && hasMetadata(p)) {
+        var fKey = playerCanonicalKey(p)
+        if (fKey) lastActivePlayerKey = fKey
+        return p
+      }
     }
 
     return null
@@ -433,14 +450,15 @@ Item {
     index = (index + delta + list.length) % list.length
     var current = activePlayer
     var next = list[index]
-    var currentWasPlaying = current && (current.isPlaying || playerHasActiveStream(current))
+    var currentWasPlaying = current && Boolean(current.isPlaying)
     var currentKey = playerCanonicalKey(current)
     var nextKey = playerCanonicalKey(next)
 
     preferredPlayerKey = nextKey
+    lastActivePlayerKey = nextKey
 
     if (transferPlayback && currentWasPlaying && next && nextKey !== currentKey) {
-      var nextWasPlaying = next.isPlaying || playerHasActiveStream(next)
+      var nextWasPlaying = Boolean(next.isPlaying)
       var nextStarted = nextWasPlaying || playPlayer(next)
       if (nextStarted) pausePlayer(current)
     }
@@ -509,11 +527,11 @@ Item {
         handled = true
       }
     } else if (action === "playPause") {
-      var isCurrentlyPlaying = player && (player.isPlaying || playerHasActiveStream(player))
+      var isCurrentlyPlaying = player && Boolean(player.isPlaying)
       actionLabel = isCurrentlyPlaying ? "Pause" : "Play"
       iconName = isCurrentlyPlaying ? "media-pause" : "media-play"
-      if (player && typeof player.playPause === "function") {
-        player.playPause()
+      if (player && typeof player.togglePlaying === "function") {
+        player.togglePlaying()
         handled = true
       } else if (player && player.isPlaying && player.canPause) {
         player.pause()
@@ -521,13 +539,14 @@ Item {
       } else if (player && !player.isPlaying && player.canPlay) {
         player.play()
         handled = true
-      } else if (player && player.canTogglePlaying) {
-        player.togglePlaying()
-        handled = true
       }
     }
 
-    if (handled && key) preferredPlayerKey = playerCanonicalKey(player)
+    if (handled && key) {
+      var cKey = playerCanonicalKey(player)
+      preferredPlayerKey = cKey
+      lastActivePlayerKey = cKey
+    }
     if (showFeedback !== false)
       scheduleOsd(actionLabel, iconName, player, handled && (action === "next" || action === "previous"), beforeTrackSignature)
     return handled
@@ -535,9 +554,6 @@ Item {
 
   Component.onCompleted: root.syncPlayingOrder()
   onPlayersChanged: root.syncPlayingOrder()
-
-
-
 
   Timer {
     id: trackOsdTimer
@@ -549,20 +565,24 @@ Item {
   PwObjectTracker { objects: root.playbackStreams }
 
   function statusJson() {
-    var p = activePlayer
-    // Read isPlaying directly from the player object to get the freshest value.
-    // p.isPlaying is the Q_PROPERTY from Quickshell's MprisPlayer (backed by playbackState).
+    var p = selectActivePlayer()
     var playing = p ? (p.isPlaying === true) : false
+    var t = p ? (p.trackTitle || (p.metadata && p.metadata["xesam:title"]) || "") : ""
+    var a = p ? (p.trackArtist || (p.metadata && p.metadata["xesam:artist"]) || "") : ""
+    var cleanedTitle = MediaModel.cleanTitle(t, a)
+    var finalTitle = cleanedTitle || (p ? (p.identity || p.desktopEntry || "Media Playing") : "")
+    var finalArtist = p ? MediaModel.cleanArtist(a, t, p) : ""
+
     return JSON.stringify({
       hasPlayer: p !== null,
-      hasMedia: p !== null && (p.trackTitle || p.trackArtist || playing),
+      hasMedia: p !== null && (Boolean(finalTitle) || Boolean(finalArtist) || playing),
       playing: playing,
       identity: p ? (p.identity || "") : "",
       desktopEntry: p ? (p.desktopEntry || "") : "",
-      title: root.title,
-      artist: root.artist,
-      album: p && p.trackAlbum ? p.trackAlbum : "",
-      artUrl: root.artUrl,
+      title: finalTitle,
+      artist: finalArtist,
+      album: p && p.trackAlbum ? p.trackAlbum : (p && p.metadata && p.metadata["xesam:album"] ? p.metadata["xesam:album"] : ""),
+      artUrl: p ? MediaModel.extractArtUrl(p) : "",
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,
       canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false
