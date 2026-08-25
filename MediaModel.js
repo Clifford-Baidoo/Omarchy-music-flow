@@ -254,38 +254,55 @@ function trackChanged(previousSignature, player) {
   return trackSignature(player) !== String(previousSignature || "")
 }
 
-// Cleans up common ugly tags from media titles (e.g. Animepahe, YouTube, anime filenames, web sites)
+// Cleans up common ugly tags from media titles (e.g. FMovies, Dulo TV, Animepahe, YouTube, movie/series sites)
 function cleanTitle(rawTitle, rawArtist) {
   var title = String(rawTitle || "").trim()
   if (!title) return ""
 
-  // 1. Remove browser / app suffixes
-  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
-  title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
-  title = title.replace(/\s*::\s*.*$/i, "") // Strip Animepahe tagline
+  // 1. Remove browser suffixes first
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Microsoft Edge|Vivaldi|Opera)$/i, "")
 
-  // 2. Remove Anime Release Group tags: [SubsPlease], [Erai-raws], [Judas], etc.
+  // 2. Remove site branding suffixes (FMovies, Dulo TV, Animepahe, 123Movies, BFlix, SFlix, etc.)
+  title = title.replace(/\s*(?:[-—|•]|on)\s*(?:Dulo TV|Dulo\.gd|Dulo|FMovies\.to|FMovies\.ps|FMovies|FmoviesZ|BFlix|SFlix|123Movies|Gomovies|Soap2Day|SolarMovie|LookMovie|MyFlixer|FlixHQ|WatchSeries|Cineb|Animepahe|HiAnime|AniWave|Gogoanime|Zoro)(?:\.[a-z]{2,4})?$/i, "")
+  title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
+
+  // 3. Remove generic site taglines
+  title = title.replace(/\s*[-—|•]\s*Stream Movies & TV Shows.*$/i, "")
+  title = title.replace(/\s*::\s*.*$/i, "")
+
+  // 4. Remove streaming filler phrases: "Online Free HD", "Full Movie Online Free", "Watch Online Free", "Free HD", etc.
+  title = title.replace(/\s*(?:Full Movie|Full Show|Full HD|HD Free|Online Free HD|Online Free|Watch Free Online|Watch Online Free|Watch Online|Free Online|Online HD|Free HD|HD Online|Free Stream|Streaming Online)\s*/gi, " ")
+  title = title.replace(/\s+on\s+[A-Za-z0-9\.]+(?:\s+Free)?$/i, "")
+
+  // 5. Remove "Watch " prefix at the start (e.g. "Watch Breaking Bad Season 1..." -> "Breaking Bad Season 1...")
+  title = title.replace(/^Watch\s+/i, "")
+
+  // 6. Remove anime release group tags and video quality brackets
   title = title.replace(/^\[[^\]]+\]\s*/g, "")
   title = title.replace(/\s*\[[0-9a-fA-F]{8}\]/g, "") // CRC32 hashes
   title = title.replace(/\s*\[(?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\]/gi, "")
   title = title.replace(/\s*\((?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\)/gi, "")
 
-  // 3. Remove file extensions
+  // 7. Remove file extensions
   title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
 
-  // 4. Strip duplicate artist prefix if present
+  // 8. Strip duplicate artist prefix if present
   if (rawArtist && title.toLowerCase().indexOf(String(rawArtist).toLowerCase() + " - ") === 0) {
     title = title.substring(String(rawArtist).length + 3).trim()
   }
 
-  // 5. If title is "Artist - Song" and no artist was provided, split it
+  // 9. Clean up multiple consecutive spaces
+  title = title.replace(/\s{2,}/g, " ").trim()
+
+  // 10. If title had "Artist - Title", split it unless right side is episode/season
   if (!rawArtist && title.indexOf(" - ") !== -1) {
     var parts = title.split(" - ")
     if (parts.length === 2) {
       var left = parts[0].trim()
       var right = parts[1].trim()
-      var isEpisode = /^(?:ep|episode|part|vol|v)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
-      if (!isEpisode && left.length > 1 && right.length > 1) {
+      var isEpisode = /^(?:ep|episode|season|part|vol|v|s[0-9]+|e[0-9]+)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
+      if (!isEpisode && left.length > 1 && right.length > 1 && !/^(?:Season|Episode|Chapter)/i.test(right)) {
         return right
       }
     }
@@ -314,7 +331,7 @@ function cleanArtist(rawArtist, rawTitle, player, winTitle) {
     if (parts.length === 2) {
       var left = parts[0].trim()
       var right = parts[1].trim()
-      var isEpisode = /^(?:ep|episode|part|vol|v)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
+      var isEpisode = /^(?:ep|episode|season|part|vol|v)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
       if (!isEpisode && left.length > 1 && right.length > 1) {
         return left
       }
@@ -372,41 +389,35 @@ function detectPlatform(player, winTitle) {
     return { name: "Twitch", icon: "󰕧" }
   }
 
-  // 4. Anime streaming sites (Animepahe, HiAnime, 9anime, Gogoanime, Zoro, etc.)
+  // 4. Movie & Series Streaming Platforms (FMovies, Dulo TV, 123Movies, BFlix, SFlix, SolarMovie, etc.)
+  if (rawTitle.indexOf("fmovies") !== -1) return { name: "FMovies", icon: "󰐹" }
+  if (rawTitle.indexOf("dulo.gd") !== -1 || rawTitle.indexOf("dulo tv") !== -1 || rawTitle.indexOf("dulo") !== -1) return { name: "Dulo TV", icon: "󰐹" }
+  if (rawTitle.indexOf("123movies") !== -1 || rawTitle.indexOf("bflix") !== -1 || rawTitle.indexOf("sflix") !== -1 || rawTitle.indexOf("solarmovie") !== -1 || rawTitle.indexOf("soap2day") !== -1) {
+    return { name: "Movies", icon: "󰐹" }
+  }
+
+  // 5. Anime streaming sites (Animepahe, HiAnime, 9anime, Gogoanime, Zoro, etc.)
   if (rawTitle.indexOf("animepahe") !== -1) return { name: "Animepahe", icon: "󰚩" }
   if (rawTitle.indexOf("hianime") !== -1) return { name: "HiAnime", icon: "󰚩" }
   if (rawTitle.indexOf("9anime") !== -1 || rawTitle.indexOf("aniwave") !== -1) return { name: "AniWave", icon: "󰚩" }
   if (rawTitle.indexOf("gogoanime") !== -1 || rawTitle.indexOf("anitaku") !== -1) return { name: "Gogoanime", icon: "󰚩" }
-  if (rawTitle.indexOf("dulo.gd") !== -1 || rawTitle.indexOf("dulo tv") !== -1) return { name: "Dulo", icon: "󰐹" }
 
-  // 5. Crunchyroll
-  if (url.indexOf("crunchyroll.com") !== -1 || rawTitle.indexOf("crunchyroll") !== -1) {
-    return { name: "Crunchyroll", icon: "󰚩" }
-  }
+  // 6. Crunchyroll & Netflix
+  if (url.indexOf("crunchyroll.com") !== -1 || rawTitle.indexOf("crunchyroll") !== -1) return { name: "Crunchyroll", icon: "󰚩" }
+  if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) return { name: "Netflix", icon: "󰝆" }
 
-  // 6. Netflix
-  if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) {
-    return { name: "Netflix", icon: "󰝆" }
-  }
+  // 7. SoundCloud & Bandcamp
+  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) return { name: "SoundCloud", icon: "󰝚" }
+  if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) return { name: "Bandcamp", icon: "󰝚" }
 
-  // 7. SoundCloud
-  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) {
-    return { name: "SoundCloud", icon: "󰝚" }
-  }
-
-  // 8. Bandcamp
-  if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) {
-    return { name: "Bandcamp", icon: "󰝚" }
-  }
-
-  // 9. Dedicated media players
+  // 8. Dedicated media players
   if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
   if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
   if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
   if (id.indexOf("stremio") !== -1) return { name: "Stremio", icon: "󰐹" }
   if (id.indexOf("celluloid") !== -1) return { name: "Celluloid", icon: "󰐹" }
 
-  // 10. Fallbacks to browser app names
+  // 9. Fallbacks to browser app names
   if (id.indexOf("zen") !== -1) return { name: "Zen Browser", icon: "󰈹" }
   if (id.indexOf("firefox") !== -1) return { name: "Firefox", icon: "󰈹" }
   if (id.indexOf("brave") !== -1) return { name: "Brave", icon: "󰊯" }
