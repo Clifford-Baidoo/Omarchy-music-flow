@@ -34,7 +34,7 @@ Item {
     return list
   }
 
-  // Active Seanime stream player (when running in Electron web player)
+  // Active Seanime stream player (when running in Electron web player without MPV)
   readonly property var seanimePlayer: {
     for (var i = 0; i < playbackStreams.length; i++) {
       var s = playbackStreams[i]
@@ -147,6 +147,7 @@ Item {
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
+      if (!p || isProxyPlayer(p)) continue
       var key = playerKey(p)
       if (!key) continue
 
@@ -173,15 +174,31 @@ Item {
 
   function orderedSourcePlayers() {
     var list = []
+    var seen = {}
+    var hasMpvMpris = false
+
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (hasMetadata(p)) list.push(p)
+      if (!p || isProxyPlayer(p)) continue
+      var key = playerKey(p)
+      if (!key || seen[key]) continue
+      seen[key] = true
+      if (hasMetadata(p)) {
+        list.push(p)
+        if (key.toLowerCase().indexOf("mpv") !== -1) hasMpvMpris = true
+      }
     }
-    if (seanimePlayer) list.push(seanimePlayer)
+
+    if (seanimePlayer && !hasMpvMpris) {
+      var sKey = playerKey(seanimePlayer)
+      if (!seen[sKey]) {
+        seen[sKey] = true
+        list.push(seanimePlayer)
+      }
+    }
 
     list.sort(function(a, b) {
       if (!!a.isPlaying !== !!b.isPlaying) return a.isPlaying ? -1 : 1
-      if (isProxyPlayer(a) !== isProxyPlayer(b)) return isProxyPlayer(a) ? 1 : -1
       if (a.isPlaying && b.isPlaying) {
         var orderDelta = playerOrder(a, 1000) - playerOrder(b, 1000)
         if (orderDelta !== 0) return orderDelta
@@ -194,16 +211,28 @@ Item {
 
   function orderedCycleSourcePlayers() {
     var list = []
+    var seen = {}
+    var hasMpvMpris = false
+
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (canCycleSource(p)) list.push(p)
+      if (!p || isProxyPlayer(p)) continue
+      var key = playerKey(p)
+      if (!key || seen[key]) continue
+      seen[key] = true
+      if (canCycleSource(p)) {
+        list.push(p)
+        if (key.toLowerCase().indexOf("mpv") !== -1) hasMpvMpris = true
+      }
     }
-    if (seanimePlayer) list.push(seanimePlayer)
 
-    list.sort(function(a, b) {
-      if (isProxyPlayer(a) !== isProxyPlayer(b)) return isProxyPlayer(a) ? 1 : -1
-      return labelFor(a).localeCompare(labelFor(b))
-    })
+    if (seanimePlayer && !hasMpvMpris) {
+      var sKey = playerKey(seanimePlayer)
+      if (!seen[sKey]) {
+        seen[sKey] = true
+        list.push(seanimePlayer)
+      }
+    }
 
     return list
   }
@@ -211,29 +240,23 @@ Item {
   function oldestPlayingPlayer(requirePlaybackStream) {
     var oldest = null
     var oldestOrder = 0
-    var playingProxy = null
-    var proxyOrder = 0
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (!p) continue
+      if (!p || isProxyPlayer(p)) continue
 
-      var proxyPlayer = isProxyPlayer(p)
       if (p.isPlaying) {
         if (requirePlaybackStream && !playerHasPlaybackStream(p)) continue
 
         var order = playerOrder(p, i + 1000)
-        if (!proxyPlayer && (!oldest || order < oldestOrder)) {
+        if (!oldest || order < oldestOrder) {
           oldest = p
           oldestOrder = order
-        } else if (proxyPlayer && (!playingProxy || order < proxyOrder)) {
-          playingProxy = p
-          proxyOrder = order
         }
       }
     }
 
-    return oldest || playingProxy || null
+    return oldest || null
   }
 
   function selectActivePlayer() {
@@ -256,11 +279,10 @@ Item {
     // 4. Currently playing Seanime stream
     if (seanimePlayer) return seanimePlayer
 
-    // 5. Fallbacks (first available player with metadata)
-    if (players.length > 0) {
-      for (var i = 0; i < players.length; i++) {
-        if (hasMetadata(players[i])) return players[i]
-      }
+    // 5. Fallbacks (first available non-proxy player with metadata)
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i]
+      if (p && !isProxyPlayer(p) && hasMetadata(p)) return p
     }
 
     return null
