@@ -80,18 +80,18 @@ BarWidget {
   readonly property string playIcon: isPlaying ? "󰏤" : "󰐊"
   
   readonly property string title: {
-    if (mediaService && mediaService.title) return mediaService.title
+    if (mediaService && mediaService.title) return MediaModel.sanitizeText(mediaService.title)
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     if (t) return MediaModel.cleanTitle(t, a)
-    if (activePlayer.identity) return String(activePlayer.identity)
-    if (activePlayer.desktopEntry) return String(activePlayer.desktopEntry)
+    if (activePlayer.identity) return MediaModel.sanitizeText(activePlayer.identity)
+    if (activePlayer.desktopEntry) return MediaModel.sanitizeText(activePlayer.desktopEntry)
     return "Playing"
   }
 
   readonly property string artist: {
-    if (mediaService && mediaService.artist) return mediaService.artist
+    if (mediaService && mediaService.artist) return MediaModel.sanitizeText(mediaService.artist)
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
@@ -99,15 +99,15 @@ BarWidget {
   }
 
   readonly property string album: {
-    if (mediaService && mediaService.album) return mediaService.album
+    if (mediaService && mediaService.album) return MediaModel.cleanAlbum(mediaService.album)
     if (!activePlayer) return ""
-    if (activePlayer.trackAlbum) return String(activePlayer.trackAlbum)
-    if (activePlayer.metadata && activePlayer.metadata["xesam:album"]) return String(activePlayer.metadata["xesam:album"])
+    if (activePlayer.trackAlbum) return MediaModel.cleanAlbum(activePlayer.trackAlbum)
+    if (activePlayer.metadata && activePlayer.metadata["xesam:album"]) return MediaModel.cleanAlbum(activePlayer.metadata["xesam:album"])
     return ""
   }
 
   readonly property string artUrl: {
-    if (mediaService && mediaService.artUrl) return mediaService.artUrl
+    if (mediaService && mediaService.artUrl) return MediaModel.sanitizeArtUrl(mediaService.artUrl)
     if (!activePlayer) return ""
     return MediaModel.extractArtUrl(activePlayer)
   }
@@ -478,7 +478,7 @@ BarWidget {
         root.runAction("next", root.activePlayer)
       }
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? (root.title + (root.artist ? " — " + root.artist : "")) : "Music Player (Right-click: Toggle Text)")
+    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? MediaModel.sanitizeText(root.title + (root.artist ? " — " + root.artist : "")) : "Music Player (Right-click: Toggle Text)")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
@@ -810,7 +810,7 @@ BarWidget {
               var t = player.trackTitle || (player.metadata && player.metadata["xesam:title"]) || ""
               var a = player.trackArtist || (player.metadata && player.metadata["xesam:artist"]) || ""
               if (t) return MediaModel.cleanTitle(t, a)
-              return player.identity || "Active Player"
+              return MediaModel.sanitizeText(player.identity || "Active Player")
             }
             readonly property string artistName: {
               if (!player) return ""

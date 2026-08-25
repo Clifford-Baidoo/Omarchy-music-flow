@@ -92,7 +92,7 @@ Item {
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     var cleaned = MediaModel.cleanTitle(t, a)
     if (cleaned) return cleaned
-    return activePlayer.identity || activePlayer.desktopEntry || "Media Playing"
+    return MediaModel.sanitizeText(activePlayer.identity || activePlayer.desktopEntry || "Media Playing")
   }
 
   readonly property string artist: {
@@ -102,9 +102,9 @@ Item {
     return MediaModel.cleanArtist(a, t, activePlayer)
   }
 
-  readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
+  readonly property string album: activePlayer && activePlayer.trackAlbum ? MediaModel.cleanAlbum(activePlayer.trackAlbum) : (activePlayer && activePlayer.metadata && activePlayer.metadata["xesam:album"] ? MediaModel.cleanAlbum(activePlayer.metadata["xesam:album"]) : "")
   readonly property string artUrl: activePlayer ? MediaModel.extractArtUrl(activePlayer) : ""
-  readonly property string identity: activePlayer ? (activePlayer.identity || activePlayer.desktopEntry || "") : ""
+  readonly property string identity: activePlayer ? MediaModel.sanitizeText(activePlayer.identity || activePlayer.desktopEntry || "") : ""
 
   function isProxyPlayer(player) {
     return MediaModel.isProxyPlayer(player)
@@ -361,7 +361,7 @@ Item {
     if (!shell) return
     shell.summon("omarchy.osd", JSON.stringify({
       icon: iconName || "media",
-      message: osdMessage(player || activePlayer, actionLabel)
+      message: MediaModel.sanitizeText(osdMessage(player || activePlayer, actionLabel))
     }))
   }
 
@@ -570,18 +570,21 @@ Item {
     var t = p ? (p.trackTitle || (p.metadata && p.metadata["xesam:title"]) || "") : ""
     var a = p ? (p.trackArtist || (p.metadata && p.metadata["xesam:artist"]) || "") : ""
     var cleanedTitle = MediaModel.cleanTitle(t, a)
-    var finalTitle = cleanedTitle || (p ? (p.identity || p.desktopEntry || "Media Playing") : "")
+    var finalTitle = cleanedTitle || (p ? MediaModel.sanitizeText(p.identity || p.desktopEntry || "Media Playing") : "")
     var finalArtist = p ? MediaModel.cleanArtist(a, t, p) : ""
+    var finalAlbum = p ? (p.trackAlbum ? MediaModel.cleanAlbum(p.trackAlbum) : (p.metadata && p.metadata["xesam:album"] ? MediaModel.cleanAlbum(p.metadata["xesam:album"]) : "")) : ""
+    var finalIdentity = p ? MediaModel.sanitizeText(p.identity || "") : ""
+    var finalDesktop = p ? MediaModel.sanitizeText(p.desktopEntry || "") : ""
 
     return JSON.stringify({
       hasPlayer: p !== null,
       hasMedia: p !== null && (Boolean(finalTitle) || Boolean(finalArtist) || playing),
       playing: playing,
-      identity: p ? (p.identity || "") : "",
-      desktopEntry: p ? (p.desktopEntry || "") : "",
+      identity: finalIdentity,
+      desktopEntry: finalDesktop,
       title: finalTitle,
       artist: finalArtist,
-      album: p && p.trackAlbum ? p.trackAlbum : (p && p.metadata && p.metadata["xesam:album"] ? p.metadata["xesam:album"] : ""),
+      album: finalAlbum,
       artUrl: p ? MediaModel.extractArtUrl(p) : "",
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,

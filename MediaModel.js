@@ -254,9 +254,38 @@ function trackChanged(previousSignature, player) {
   return trackSignature(player) !== String(previousSignature || "")
 }
 
+// ------------------------------------------------------------------------------
+// Text & Security Sanitization
+// ------------------------------------------------------------------------------
+
+// Strips HTML/XML markup, scripts, control characters, and angle brackets so
+// strings are guaranteed safe when rendered in Text sinks (PlainText or AutoText)
+function sanitizeText(raw) {
+  if (raw === null || raw === undefined) return ""
+  var text = String(raw)
+  if (!text) return ""
+
+  // 1. Remove script, style, and iframe blocks including contents
+  text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+  text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+  text = text.replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "")
+
+  // 2. Strip all remaining HTML/XML tags (e.g. <img ...>, <b>, etc.)
+  text = text.replace(/<[^>]*>/g, "")
+
+  // 3. Strip remaining isolated angle brackets, control characters, and non-printable characters
+  text = text.replace(/[<>\x00-\x1f\x7f]/g, "")
+
+  // 4. Normalize multiple whitespace sequences
+  text = text.replace(/\s{2,}/g, " ")
+
+  return text.trim()
+}
+
 // Cleans up common ugly tags from media titles (e.g. YouTube, Animepahe, movie/music titles)
 function cleanTitle(rawTitle, rawArtist) {
-  var title = String(rawTitle || "").trim()
+  var title = sanitizeText(rawTitle)
+  var artist = sanitizeText(rawArtist)
   if (!title) return ""
 
   // 1. Remove browser suffixes
@@ -281,41 +310,41 @@ function cleanTitle(rawTitle, rawArtist) {
   title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
 
   // 6. Strip duplicate artist prefix if present
-  if (rawArtist && title.toLowerCase().indexOf(String(rawArtist).toLowerCase() + " - ") === 0) {
-    title = title.substring(String(rawArtist).length + 3).trim()
+  if (artist && title.toLowerCase().indexOf(artist.toLowerCase() + " - ") === 0) {
+    title = title.substring(artist.length + 3).trim()
   }
 
   // 7. Clean up multiple consecutive spaces
   title = title.replace(/\s{2,}/g, " ").trim()
 
   // 8. If title had "Artist - Title", split it unless right side is episode/season
-  if (!rawArtist && title.indexOf(" - ") !== -1) {
+  if (!artist && title.indexOf(" - ") !== -1) {
     var parts = title.split(" - ")
     if (parts.length === 2) {
       var left = parts[0].trim()
       var right = parts[1].trim()
       var isEpisode = /^(?:ep|episode|season|part|vol|v|s[0-9]+|e[0-9]+)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
       if (!isEpisode && left.length > 1 && right.length > 1 && !/^(?:Season|Episode|Chapter)/i.test(right)) {
-        return right
+        return sanitizeText(right)
       }
     }
   }
 
-  return title.trim()
+  return sanitizeText(title)
 }
 
 // Derives a clean artist or source badge
 function cleanArtist(rawArtist, rawTitle, player) {
   var artist = ""
   if (rawArtist) {
-    if (Array.isArray(rawArtist)) artist = rawArtist.join(", ")
-    else artist = String(rawArtist).trim()
+    if (Array.isArray(rawArtist)) artist = rawArtist.map(sanitizeText).join(", ")
+    else artist = sanitizeText(rawArtist)
   }
 
-  if (artist && artist !== "Unknown" && artist !== "undefined") return artist
+  if (artist && artist !== "Unknown" && artist !== "undefined") return sanitizeText(artist)
 
   // If artist is missing, check if title had "Artist - Title"
-  var title = String(rawTitle || "").trim()
+  var title = sanitizeText(rawTitle)
   title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
@@ -326,47 +355,188 @@ function cleanArtist(rawArtist, rawTitle, player) {
       var right = parts[1].trim()
       var isEpisode = /^(?:ep|episode|season|part|vol|v)?\s*[0-9]+(?:\.[0-9]+)?$/i.test(right)
       if (!isEpisode && left.length > 1 && right.length > 1) {
-        return left
+        return sanitizeText(left)
       }
     }
   }
 
   // Fallback to detected platform name
   var src = sourceName(player)
-  if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
+  if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return sanitizeText(src)
 
   return ""
 }
 
-// Validates artwork URI against strictly permitted image schemes
+function cleanAlbum(rawAlbum) {
+  return sanitizeText(rawAlbum)
+}
+
+// ------------------------------------------------------------------------------
+// Artwork URL Validation & Resource Protection
+// ------------------------------------------------------------------------------
+
+var MAX_URL_LENGTH = 2048
+var MAX_DATA_IMAGE_LENGTH = 256 * 1024 // 256 KB max for inline data URIs
+
+// Whitelist of trusted media artwork CDN domains
+var ALLOWED_HTTPS_CDN_DOMAINS = [
+  // YouTube
+  "i.ytimg.com",
+  "img.youtube.com",
+  // Spotify
+  "i.scdn.co",
+  "image-cdn-ak.spotifycdn.com",
+  "image-cdn-fa.spotifycdn.com",
+  "mosaic.scdn.co",
+  "lineup-images.scdn.co",
+  // Apple Music / iTunes
+  "is1-ssl.mzstatic.com",
+  "is2-ssl.mzstatic.com",
+  "is3-ssl.mzstatic.com",
+  "is4-ssl.mzstatic.com",
+  "is5-ssl.mzstatic.com",
+  "is-ssl.mzstatic.com",
+  // SoundCloud
+  "i1.sndcdn.com",
+  "a1.sndcdn.com",
+  // Bandcamp
+  "f4.bcbits.com",
+  // Last.fm
+  "lastfm.freetls.fastly.net",
+  // Deezer
+  "e-cdns-images.dzcdn.net",
+  "cdns-images.dzcdn.net",
+  // Tidal
+  "resources.tidal.com",
+  // Amazon Music
+  "m.media-amazon.com",
+  "images-na.ssl-images-amazon.com",
+  // Genius
+  "images.genius.com",
+  "images.rapgenius.com"
+]
+
+function isAllowedLocalPath(path) {
+  if (!path || typeof path !== "string") return false
+  if (path.length > MAX_URL_LENGTH) return false
+
+  // Reject control characters and directory traversal
+  if (/[\x00-\x1f\x7f]/.test(path)) return false
+  if (path.indexOf("..") !== -1) return false
+  if (path.charAt(0) !== "/") return false
+
+  // Disallow sensitive and special OS system paths
+  var blockedPrefixes = [
+    "/dev/", "/proc/", "/sys/", "/etc/", "/run/", "/var/run/",
+    "/boot/", "/root/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/"
+  ]
+  for (var i = 0; i < blockedPrefixes.length; i++) {
+    if (path.indexOf(blockedPrefixes[i]) === 0) return false
+  }
+
+  // Allowed directory roots for local user artwork & media caches
+  var allowedPrefixes = [
+    "/home/", "/tmp/", "/var/tmp/", "/usr/share/", "/media/", "/mnt/"
+  ]
+  var inAllowedPrefix = allowedPrefixes.some(function(p) {
+    return path.indexOf(p) === 0
+  })
+  if (!inAllowedPrefix) return false
+
+  // Allowed image file extensions
+  var allowedExtensions = /\.(png|jpe?g|webp|gif|bmp|svg|ico)$/i
+  if (allowedExtensions.test(path)) return true
+
+  // Allow cache files with alphanumeric filenames in tmp or cache directories
+  if (path.indexOf("/tmp/") === 0 || path.indexOf("/var/tmp/") === 0 || path.indexOf("/.cache/") !== -1) {
+    var basename = path.split("/").pop()
+    if (/^[a-zA-Z0-9_\-\.]+$/.test(basename)) return true
+  }
+
+  return false
+}
+
+function isAllowedHttpsUrl(urlString) {
+  if (!urlString || typeof urlString !== "string") return false
+  if (urlString.length > MAX_URL_LENGTH) return false
+  if (/[\x00-\x1f\x7f\s]/.test(urlString)) return false
+  if (urlString.indexOf("https://") !== 0) return false
+
+  // Parse authority
+  var withoutScheme = urlString.slice(8)
+  var slashIndex = withoutScheme.indexOf("/")
+  var hostAndPort = slashIndex === -1 ? withoutScheme : withoutScheme.slice(0, slashIndex)
+
+  // Reject userinfo (e.g. https://user:pass@host)
+  if (hostAndPort.indexOf("@") !== -1) return false
+
+  // Reject non-standard ports
+  var portIndex = hostAndPort.indexOf(":")
+  var host = (portIndex === -1 ? hostAndPort : hostAndPort.slice(0, portIndex)).toLowerCase()
+  if (portIndex !== -1) {
+    var port = hostAndPort.slice(portIndex + 1)
+    if (port !== "443") return false
+  }
+
+  // Reject IP literals and local hostnames to prevent SSRF
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(host)) return false
+  if (host.indexOf("[") !== -1 || host.indexOf("]") !== -1) return false
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".lan")) return false
+
+  // Must match trusted CDN domain whitelist
+  return ALLOWED_HTTPS_CDN_DOMAINS.some(function(domain) {
+    return host === domain || host.endsWith("." + domain)
+  })
+}
+
+// Validates artwork URI against strictly permitted image schemes, safe CDN hosts, and byte limits
 function sanitizeArtUrl(rawUrl) {
   if (!rawUrl) return ""
   var url = String(rawUrl).trim()
   if (!url) return ""
 
-  // Reject newlines, control characters, and null bytes
+  // Reject control characters and newlines
   if (/[\x00-\x1f\x7f]/.test(url)) return ""
 
-  // Allow standard file schemes and absolute paths
-  if (url.indexOf("file://") === 0 || url.charAt(0) === "/") {
-    return url
+  // 1. Data URIs with explicit image MIME types and strict bounded byte size
+  if (url.indexOf("data:image/") === 0) {
+    if (url.length > MAX_DATA_IMAGE_LENGTH) return ""
+    if (/^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(url)) {
+      return url
+    }
+    return ""
   }
 
-  // Allow HTTP and HTTPS schemes
-  if (/^https?:\/\/[^\s]+$/i.test(url)) {
-    return url
+  // 2. Local file URIs: file:///...
+  if (url.indexOf("file://") === 0) {
+    var path = url.slice(7)
+    try { path = decodeURIComponent(path) } catch (e) {}
+    if (isAllowedLocalPath(path)) {
+      return "file://" + path
+    }
+    return ""
   }
 
-  // Allow data URIs with explicit image MIME types only
-  if (/^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);base64,[a-zA-Z0-9+/=]+$/i.test(url) ||
-      /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);utf8,[^\s]+$/i.test(url)) {
-    return url
+  // 3. Absolute local filesystem paths: /...
+  if (url.charAt(0) === "/") {
+    if (isAllowedLocalPath(url)) {
+      return "file://" + url
+    }
+    return ""
+  }
+
+  // 4. Remote HTTPS URLs strictly limited to trusted media CDN hosts
+  if (url.indexOf("https://") === 0) {
+    if (isAllowedHttpsUrl(url)) {
+      return url
+    }
+    return ""
   }
 
   return ""
 }
 
-// Robust artwork extraction with YouTube thumbnail fallback and scheme validation
+// Robust artwork extraction with YouTube thumbnail fallback and scheme/destination validation
 function extractArtUrl(player) {
   if (!player) return ""
 
@@ -394,6 +564,7 @@ function extractArtUrl(player) {
       return sanitizeArtUrl("https://i.ytimg.com/vi/" + ytMatch[1] + "/hqdefault.jpg")
     }
   }
+
   return ""
 }
 
@@ -457,11 +628,11 @@ function detectPlatform(player) {
   if (id.indexOf("edge") !== -1) return { name: "Edge", icon: "󰊯" }
 
   var fallbackName = (player && (player.identity || player.desktopEntry)) || "Media"
-  return { name: fallbackName, icon: "󰝚" }
+  return { name: sanitizeText(fallbackName), icon: "󰝚" }
 }
 
 function sourceName(player) {
-  return detectPlatform(player).name
+  return sanitizeText(detectPlatform(player).name)
 }
 
 function sourceIcon(player) {
@@ -470,14 +641,16 @@ function sourceIcon(player) {
 
 function labelFor(player) {
   if (!player) return ""
-  return player.trackTitle || player.identity || player.desktopEntry || sourceName(player) || ""
+  var raw = player.trackTitle || player.identity || player.desktopEntry || sourceName(player) || ""
+  return sanitizeText(raw)
 }
 
 function osdMessage(player, fallback) {
-  if (!player) return fallback
+  if (!player) return sanitizeText(fallback)
   var label = labelFor(player)
-  if (label && player.trackArtist) return label + " - " + player.trackArtist
-  return label || fallback
+  var artist = player.trackArtist ? sanitizeText(player.trackArtist) : ""
+  if (label && artist) return sanitizeText(label + " - " + artist)
+  return sanitizeText(label || fallback)
 }
 
 if (typeof module !== "undefined") {
@@ -502,8 +675,10 @@ if (typeof module !== "undefined") {
     playerCanonicalKey: playerCanonicalKey,
     trackSignature: trackSignature,
     trackChanged: trackChanged,
+    sanitizeText: sanitizeText,
     cleanTitle: cleanTitle,
     cleanArtist: cleanArtist,
+    cleanAlbum: cleanAlbum,
     sanitizeArtUrl: sanitizeArtUrl,
     extractArtUrl: extractArtUrl,
     detectPlatform: detectPlatform,
