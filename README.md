@@ -45,7 +45,15 @@ Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your s
 
 ## 🚀 Installation
 
-Clone this repository and run the install script:
+### Option 1: Native Omarchy Plugin Command (Recommended)
+
+Install directly with the Omarchy CLI in a single command:
+
+```bash
+omarchy plugin add https://github.com/Clifford-Baidoo/omarchy-music-flow.git --enable
+```
+
+### Option 2: Clone & Run Installer
 
 ```bash
 git clone https://github.com/Clifford-Baidoo/omarchy-music-flow.git
@@ -56,7 +64,7 @@ chmod +x install.sh update.sh uninstall.sh
 
 The installer will:
 1. Copy the plugin files to `~/.config/omarchy/plugins/custom.media/`.
-2. Automatically enable MPV MPRIS integration for video & Seanime playback.
+2. Automatically enable MPV MPRIS integration for video & media playback.
 3. Automatically configure your bar layout in `~/.config/omarchy/shell.json`.
 4. Restart `omarchy-shell` to apply changes instantly.
 
@@ -64,7 +72,13 @@ The installer will:
 
 ## 🔄 Updating
 
-If you already have Music Flow installed and want to update to the latest version:
+### Option 1: Native Omarchy CLI
+
+```bash
+omarchy plugin update custom.media
+```
+
+### Option 2: Run Update Script
 
 ```bash
 cd omarchy-music-flow
