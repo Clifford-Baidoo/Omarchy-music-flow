@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 # ==============================================================================
 # Omarchy Music Flow Plugin Uninstaller
@@ -11,36 +11,65 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Keep these in lockstep with install.sh - both scripts must agree on ids.
 PLUGIN_ID="custom.media"
+STOCK_PLUGIN_ID="omarchy.media"
+BAR_SECTION="left"
+BAR_ANCHOR_ID="omarchy.workspaces"
 TARGET_DIR="${HOME}/.config/omarchy/plugins/${PLUGIN_ID}"
 
 echo -e "${YELLOW}==>${NC} Uninstalling ${RED}Omarchy Music Flow${NC} [${PLUGIN_ID}]..."
 
-# Remove plugin directory
+# Back up the plugin directory instead of deleting it outright, in case this
+# was run by mistake or the user wants their local edits back.
 if [ -d "${TARGET_DIR}" ]; then
-    rm -rf "${TARGET_DIR}"
+    BACKUP_DIR="$(dirname "${TARGET_DIR}")/.$(basename "${TARGET_DIR}").bak.$(date +%Y%m%d%H%M%S)"
+    mv "${TARGET_DIR}" "${BACKUP_DIR}"
     echo -e "${BLUE}==>${NC} Removed plugin directory: ${TARGET_DIR}"
+    echo -e "${BLUE}==>${NC} Backup saved to: ${BACKUP_DIR}"
 fi
 
 # Clean up configuration in shell.json
+PLUGIN_ID="${PLUGIN_ID}" STOCK_PLUGIN_ID="${STOCK_PLUGIN_ID}" \
+BAR_SECTION="${BAR_SECTION}" BAR_ANCHOR_ID="${BAR_ANCHOR_ID}" \
 python3 - << 'PYEOF'
 import json, os
+
+plugin_id = os.environ["PLUGIN_ID"]
+stock_plugin_id = os.environ["STOCK_PLUGIN_ID"]
+section = os.environ["BAR_SECTION"]
+anchor_id = os.environ["BAR_ANCHOR_ID"]
 
 config_path = os.path.expanduser("~/.config/omarchy/shell.json")
 if os.path.isfile(config_path):
     try:
         with open(config_path, "r") as f:
             config = json.load(f)
-        
+
         layout = config.get("bar", {}).get("layout", {})
         for sec in ["left", "center", "right"]:
             if sec in layout and isinstance(layout[sec], list):
-                layout[sec] = [item for item in layout[sec] if not (isinstance(item, dict) and item.get("id") == "custom.media")]
-        
+                layout[sec] = [item for item in layout[sec] if not (isinstance(item, dict) and item.get("id") == plugin_id)]
+
+        # A bar-widget's "enabled" state is derived from its presence in the
+        # layout, not from disabledPlugins - so removing custom.media without
+        # putting the stock widget back left the user with no media widget
+        # at all, despite disabledPlugins being cleared.
+        target = layout.setdefault(section, [])
+        if not any(isinstance(item, dict) and item.get("id") == stock_plugin_id for item in target):
+            inserted = False
+            for i, item in enumerate(target):
+                if isinstance(item, dict) and item.get("id") == anchor_id:
+                    target.insert(i + 1, {"id": stock_plugin_id})
+                    inserted = True
+                    break
+            if not inserted:
+                target.append({"id": stock_plugin_id})
+
         disabled = config.get("disabledPlugins", [])
-        if "omarchy.media" in disabled:
-            disabled.remove("omarchy.media")
-            
+        if stock_plugin_id in disabled:
+            disabled.remove(stock_plugin_id)
+
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
     except Exception:
