@@ -318,6 +318,7 @@ BarWidget {
       Text {
         anchors.centerIn: parent
         text: "󰝚"
+        textFormat: Text.PlainText
         color: root.isPlaying ? Color.accent : (clickArea.containsMouse ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground))
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
@@ -334,6 +335,7 @@ BarWidget {
       Text {
         anchors.centerIn: parent
         text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
+        textFormat: Text.PlainText
         color: root.isPlaying ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4))
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
@@ -354,6 +356,7 @@ BarWidget {
         id: glyph
         anchors.verticalCenter: parent.verticalCenter
         text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
+        textFormat: Text.PlainText
         color: root.isPlaying ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4))
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
@@ -378,6 +381,7 @@ BarWidget {
           id: idleLabel
           visible: !root.hasMedia
           text: "Music"
+          textFormat: Text.PlainText
           color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.bodySmall
@@ -396,6 +400,7 @@ BarWidget {
           Text {
             id: titleText
             text: root.title
+            textFormat: Text.PlainText
             color: root.bar ? root.bar.barForeground : Color.foreground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -407,6 +412,7 @@ BarWidget {
             id: sepText
             visible: root.artist !== ""
             text: "·"
+            textFormat: Text.PlainText
             color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.5)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -417,6 +423,7 @@ BarWidget {
             id: artistText
             visible: root.artist !== ""
             text: root.artist
+            textFormat: Text.PlainText
             color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.3)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -507,6 +514,9 @@ BarWidget {
             anchors.margins: Style.space(2)
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
+            autoTransform: true
+            sourceSize.width: Style.space(144)
+            sourceSize.height: Style.space(144)
             source: root.artUrl
             visible: source !== ""
           }
@@ -515,6 +525,7 @@ BarWidget {
             anchors.centerIn: parent
             visible: root.artUrl === ""
             text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
+            textFormat: Text.PlainText
             color: Color.accent
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.displayLarge
@@ -531,6 +542,7 @@ BarWidget {
             spacing: Style.space(4)
             Text {
               text: root.sourceIcon(root.activePlayer)
+              textFormat: Text.PlainText
               color: Color.accent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
@@ -538,6 +550,7 @@ BarWidget {
             }
             Text {
               text: root.sourceName(root.activePlayer).toUpperCase()
+              textFormat: Text.PlainText
               color: Color.accent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
               font.pixelSize: Style.font.caption
@@ -548,6 +561,7 @@ BarWidget {
 
           Text {
             text: root.title || "Nothing playing"
+            textFormat: Text.PlainText
             color: root.bar ? root.bar.foreground : Color.foreground
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.subtitle
@@ -558,6 +572,7 @@ BarWidget {
 
           Text {
             text: root.artist
+            textFormat: Text.PlainText
             color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.3)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -568,6 +583,7 @@ BarWidget {
 
           Text {
             text: root.album
+            textFormat: Text.PlainText
             color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
@@ -655,6 +671,7 @@ BarWidget {
                   spacing: Style.space(2)
                   Text {
                     text: flowBtn.modelData.icon
+                    textFormat: Text.PlainText
                     color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
@@ -662,6 +679,7 @@ BarWidget {
                   }
                   Text {
                     text: flowBtn.modelData.name
+                    textFormat: Text.PlainText
                     color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                     font.family: root.bar ? root.bar.fontFamily : Style.font.family
                     font.pixelSize: Style.font.caption
@@ -702,6 +720,7 @@ BarWidget {
               spacing: Style.space(3)
               Text {
                 text: root.showText ? "󰈈" : "󰈉"
+                textFormat: Text.PlainText
                 color: root.showText ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
@@ -709,6 +728,7 @@ BarWidget {
               }
               Text {
                 text: root.showText ? "Words ON" : "Pure Flow"
+                textFormat: Text.PlainText
                 color: root.showText ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
@@ -741,6 +761,7 @@ BarWidget {
           spacing: Style.space(6)
           Text {
             text: "󱘖"
+            textFormat: Text.PlainText
             color: Color.accent
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -749,6 +770,7 @@ BarWidget {
 
           Text {
             text: "SELECT PLAYER / SOURCE"
+            textFormat: Text.PlainText
             color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.caption
@@ -761,6 +783,7 @@ BarWidget {
         Text {
           visible: root.sourcePlayers.length === 0
           text: "No active media players found."
+          textFormat: Text.PlainText
           color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.bodySmall
@@ -816,6 +839,7 @@ BarWidget {
 
               Text {
                 text: sourceRow.icon
+                textFormat: Text.PlainText
                 color: sourceRow.selected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.subtitle
@@ -829,6 +853,7 @@ BarWidget {
 
                 Text {
                   text: sourceRow.name
+                  textFormat: Text.PlainText
                   color: root.bar ? root.bar.foreground : Color.foreground
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.bodySmall
@@ -839,6 +864,7 @@ BarWidget {
 
                 Text {
                   text: sourceRow.track + (sourceRow.artistName && sourceRow.artistName !== sourceRow.name ? " — " + sourceRow.artistName : "")
+                  textFormat: Text.PlainText
                   color: sourceRow.selected ? (root.bar ? root.bar.foreground : Color.foreground) : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.5)
                   font.family: root.bar ? root.bar.fontFamily : Style.font.family
                   font.pixelSize: Style.font.caption
@@ -849,6 +875,7 @@ BarWidget {
 
               Text {
                 text: (sourceRow.player && sourceRow.player.isPlaying) ? "󰏤" : "󰐊"
+                textFormat: Text.PlainText
                 color: sourceRow.selected ? Color.accent : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.bodySmall

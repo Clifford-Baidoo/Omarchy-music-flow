@@ -338,20 +338,60 @@ function cleanArtist(rawArtist, rawTitle, player) {
   return ""
 }
 
-// Robust artwork extraction with YouTube thumbnail fallback
+// Validates artwork URI against strictly permitted image schemes
+function sanitizeArtUrl(rawUrl) {
+  if (!rawUrl) return ""
+  var url = String(rawUrl).trim()
+  if (!url) return ""
+
+  // Reject newlines, control characters, and null bytes
+  if (/[\x00-\x1f\x7f]/.test(url)) return ""
+
+  // Allow standard file schemes and absolute paths
+  if (url.indexOf("file://") === 0 || url.charAt(0) === "/") {
+    return url
+  }
+
+  // Allow HTTP and HTTPS schemes
+  if (/^https?:\/\/[^\s]+$/i.test(url)) {
+    return url
+  }
+
+  // Allow data URIs with explicit image MIME types only
+  if (/^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);base64,[a-zA-Z0-9+/=]+$/i.test(url) ||
+      /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);utf8,[^\s]+$/i.test(url)) {
+    return url
+  }
+
+  return ""
+}
+
+// Robust artwork extraction with YouTube thumbnail fallback and scheme validation
 function extractArtUrl(player) {
   if (!player) return ""
-  if (player.trackArtUrl) return String(player.trackArtUrl)
+
+  var candidate = ""
+  if (player.trackArtUrl) {
+    candidate = sanitizeArtUrl(player.trackArtUrl)
+    if (candidate) return candidate
+  }
 
   var meta = player.metadata || {}
-  if (meta["mpris:artUrl"]) return String(meta["mpris:artUrl"])
-  if (meta["xesam:artUrl"]) return String(meta["xesam:artUrl"])
+  if (meta["mpris:artUrl"]) {
+    candidate = sanitizeArtUrl(meta["mpris:artUrl"])
+    if (candidate) return candidate
+  }
+
+  if (meta["xesam:artUrl"]) {
+    candidate = sanitizeArtUrl(meta["xesam:artUrl"])
+    if (candidate) return candidate
+  }
 
   var url = String(meta["xesam:url"] || player.url || "")
   if (url) {
     var ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
     if (ytMatch && ytMatch[1]) {
-      return "https://i.ytimg.com/vi/" + ytMatch[1] + "/hqdefault.jpg"
+      return sanitizeArtUrl("https://i.ytimg.com/vi/" + ytMatch[1] + "/hqdefault.jpg")
     }
   }
   return ""
@@ -464,6 +504,7 @@ if (typeof module !== "undefined") {
     trackChanged: trackChanged,
     cleanTitle: cleanTitle,
     cleanArtist: cleanArtist,
+    sanitizeArtUrl: sanitizeArtUrl,
     extractArtUrl: extractArtUrl,
     detectPlatform: detectPlatform,
     sourceName: sourceName,
