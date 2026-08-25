@@ -3,7 +3,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
-import Quickshell.Wayland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -17,13 +16,6 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
-  readonly property var toplevels: {
-    try {
-      return ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
-    } catch (e) {
-      return []
-    }
-  }
 
   readonly property var playbackStreams: {
     var list = []
@@ -34,54 +26,18 @@ Item {
     return list
   }
 
-  // Active PipeWire stream players for apps that lack MPRIS D-Bus (e.g. Seanime desktop app)
-  readonly property var streamPlayers: {
-    var list = []
-    for (var i = 0; i < playbackStreams.length; i++) {
-      var s = playbackStreams[i]
-      if (!s) continue
-      var sLabel = rawStreamLabel(s)
-      var pProps = nodeProps(s)
-      var isCorked = pProps["pulse.corked"] === "true" || pProps["pulse.corked"] === true
-      if (isCorked) continue
-
-      var hasMpris = false
-      for (var j = 0; j < players.length; j++) {
-        var p = players[j]
-        if (!p) continue
-        var pLabel = playerAppLabel(p)
-        if (MediaModel.areAppsInSameFamily(pLabel, sLabel)) {
-          hasMpris = true
-          break
-        }
-      }
-      if (!hasMpris) {
-        var vp = MediaModel.createVirtualStreamPlayer(s, root.toplevels)
-        if (vp) list.push(vp)
-      }
-    }
-    return list
-  }
-
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying) || (activePlayer.isStreamPlayer))
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying))
   
   readonly property string title: {
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     var cleaned = MediaModel.cleanTitle(t, a)
-    if (!cleaned) {
-      var winTitle = MediaModel.findWindowTitleForApp(activePlayer.desktopEntry || activePlayer.identity || activePlayer.appName || "", root.toplevels)
-      if (winTitle) {
-        var winClean = MediaModel.cleanTitle(winTitle, a)
-        if (winClean) cleaned = winClean
-      }
-    }
     if (cleaned) return cleaned
-    return activePlayer.identity || activePlayer.desktopEntry || activePlayer.appName || "Media Playing"
+    return activePlayer.identity || activePlayer.desktopEntry || "Media Playing"
   }
 
   readonly property string artist: {
@@ -153,10 +109,6 @@ Item {
       var p = players[i]
       if (playerKey(p) === key) return p
     }
-    for (var k = 0; k < streamPlayers.length; k++) {
-      var sp = streamPlayers[k]
-      if (playerKey(sp) === key) return sp
-    }
     return null
   }
 
@@ -171,9 +123,8 @@ Item {
     var alive = {}
     var serial = playSerial
 
-    var all = (players || []).concat(streamPlayers || [])
-    for (var i = 0; i < all.length; i++) {
-      var p = all[i]
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i]
       var key = playerKey(p)
       if (!key) continue
 
@@ -200,9 +151,6 @@ Item {
       var p = players[i]
       if (hasMetadata(p)) list.push(p)
     }
-    for (var j = 0; j < streamPlayers.length; j++) {
-      list.push(streamPlayers[j])
-    }
 
     list.sort(function(a, b) {
       if (!!a.isPlaying !== !!b.isPlaying) return a.isPlaying ? -1 : 1
@@ -222,9 +170,6 @@ Item {
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (canCycleSource(p)) list.push(p)
-    }
-    for (var j = 0; j < streamPlayers.length; j++) {
-      list.push(streamPlayers[j])
     }
 
     list.sort(function(a, b) {
@@ -264,10 +209,10 @@ Item {
   }
 
   function selectActivePlayer() {
-    // 1. User explicitly selected a preferred player/source
+    // 1. User explicitly selected a preferred player
     if (preferredPlayerKey) {
       var preferred = playerForKey(preferredPlayerKey)
-      if (preferred && (hasMetadata(preferred) || preferred.isStreamPlayer)) {
+      if (preferred && hasMetadata(preferred)) {
         return preferred
       }
     }
@@ -276,17 +221,11 @@ Item {
     var playingMprisWithStream = oldestPlayingPlayer(true)
     if (playingMprisWithStream) return playingMprisWithStream
 
-    // 3. Currently playing PipeWire stream (Seanime desktop app)
-    for (var s = 0; s < streamPlayers.length; s++) {
-      if (streamPlayers[s] && streamPlayers[s].isPlaying) return streamPlayers[s]
-    }
-
-    // 4. Currently playing MPRIS player
+    // 3. Currently playing MPRIS player
     var playingMpris = oldestPlayingPlayer(false)
     if (playingMpris) return playingMpris
 
-    // 5. Fallbacks
-    if (streamPlayers.length > 0) return streamPlayers[0]
+    // 4. Fallbacks (first available player with metadata)
     if (players.length > 0) {
       for (var i = 0; i < players.length; i++) {
         if (hasMetadata(players[i])) return players[i]
@@ -366,9 +305,9 @@ Item {
 
   function selectPlayer(key) {
     var player = playerForKey(key)
-    if (!player) return false
+    if (!player || !hasMetadata(player)) return false
     preferredPlayerKey = playerKey(player)
-    if (!player.isPlaying) {
+    if (!player.isPlaying && (player.canPlay || player.canTogglePlaying)) {
       playPlayer(player)
     }
     return true
@@ -376,10 +315,6 @@ Item {
 
   function playPlayer(player) {
     if (!player) return false
-    if (typeof player.play === "function") {
-      player.play()
-      return true
-    }
     if (player.canPlay) {
       player.play()
       return true
@@ -393,10 +328,6 @@ Item {
 
   function pausePlayer(player) {
     if (!player) return false
-    if (typeof player.pause === "function") {
-      player.pause()
-      return true
-    }
     if (player.canPause) {
       player.pause()
       return true
@@ -447,7 +378,7 @@ Item {
     var targeted = playerForKey(targetKey)
     if (targeted) return targeted
 
-    if (canHandleAction(activePlayer, action) || (activePlayer && activePlayer.isStreamPlayer)) return activePlayer
+    if (canHandleAction(activePlayer, action)) return activePlayer
 
     var list = sourcePlayers
     for (var i = 0; i < list.length; i++) {
@@ -482,10 +413,7 @@ Item {
     } else if (action === "play") {
       actionLabel = "Play"
       iconName = "media-play"
-      if (player && typeof player.play === "function") {
-        player.play()
-        handled = true
-      } else if (player && player.canPlay) {
+      if (player && player.canPlay) {
         player.play()
         handled = true
       } else if (player && player.canTogglePlaying && !player.isPlaying) {
@@ -495,10 +423,7 @@ Item {
     } else if (action === "pause") {
       actionLabel = "Pause"
       iconName = "media-pause"
-      if (player && typeof player.pause === "function") {
-        player.pause()
-        handled = true
-      } else if (player && player.canPause) {
+      if (player && player.canPause) {
         player.pause()
         handled = true
       } else if (player && player.canTogglePlaying && player.isPlaying) {
@@ -508,8 +433,8 @@ Item {
     } else if (action === "playPause") {
       actionLabel = player && player.isPlaying ? "Pause" : "Play"
       iconName = player && player.isPlaying ? "media-pause" : "media-play"
-      if (player && typeof player.togglePlaying === "function") {
-        player.togglePlaying()
+      if (player && typeof player.playPause === "function") {
+        player.playPause()
         handled = true
       } else if (player && player.isPlaying && player.canPause) {
         player.pause()
@@ -531,7 +456,6 @@ Item {
 
   Component.onCompleted: root.syncPlayingOrder()
   onPlayersChanged: root.syncPlayingOrder()
-  onStreamPlayersChanged: root.syncPlayingOrder()
 
   Instantiator {
     model: root.players
@@ -565,7 +489,7 @@ Item {
       artUrl: p && p.trackArtUrl ? p.trackArtUrl : "",
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,
-      canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.isStreamPlayer) : false
+      canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false
     })
   }
 

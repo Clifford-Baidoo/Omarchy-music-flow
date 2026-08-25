@@ -43,7 +43,7 @@ BarWidget {
   readonly property var activePlayer: mediaService && mediaService.activePlayer ? mediaService.activePlayer : findFallbackActivePlayer()
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
 
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(activePlayer.isPlaying) || Boolean(activePlayer.isStreamPlayer) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(activePlayer.isPlaying) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
   readonly property string playIcon: activePlayer && activePlayer.isPlaying ? "󰏤" : "󰐊"
   
   readonly property string title: {
@@ -118,11 +118,12 @@ BarWidget {
     var key = playerKey(targetPlayer)
     if (mediaService && typeof mediaService.selectPlayer === "function") {
       mediaService.selectPlayer(key)
-    }
-    if (typeof targetPlayer.play === "function") {
-      targetPlayer.play()
-    } else if (typeof targetPlayer.togglePlaying === "function") {
-      targetPlayer.togglePlaying()
+    } else {
+      if (typeof targetPlayer.play === "function") {
+        targetPlayer.play()
+      } else if (typeof targetPlayer.togglePlaying === "function") {
+        targetPlayer.togglePlaying()
+      }
     }
   }
 
@@ -297,7 +298,7 @@ BarWidget {
             id: sepText
             visible: root.artist !== ""
             text: "·"
-            color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.5)
+            color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.5)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             anchors.verticalCenter: parent.verticalCenter
@@ -487,7 +488,7 @@ BarWidget {
           horizontalPadding: Style.spacing.panelGap
           verticalPadding: Style.spacing.controlPaddingY
           iconSize: Style.font.iconLarge
-          enabled: Boolean(root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause || root.activePlayer.isStreamPlayer))
+          enabled: Boolean(root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause))
           opacity: enabled ? 1.0 : 0.4
           onClicked: root.runAction("playPause", root.activePlayer)
         }
@@ -562,7 +563,7 @@ BarWidget {
               var t = player.trackTitle || (player.metadata && player.metadata["xesam:title"]) || ""
               var a = player.trackArtist || (player.metadata && player.metadata["xesam:artist"]) || ""
               if (t) return MediaModel.cleanTitle(t, a)
-              return player.identity || player.appName || "Active Player"
+              return player.identity || "Active Player"
             }
             readonly property string artistName: {
               if (!player) return ""

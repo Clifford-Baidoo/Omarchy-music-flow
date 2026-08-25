@@ -1,5 +1,5 @@
 // ==============================================================================
-// MediaModel.js - Music Flow Intelligent Media & Stream Resolver
+// MediaModel.js - Music Flow Intelligent Media & Metadata Resolver
 // ==============================================================================
 
 function isProxyPlayer(player) {
@@ -23,12 +23,11 @@ function hasTrackMetadata(player) {
 }
 
 function playerCanControl(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious || player.isStreamPlayer))
+  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
 }
 
 function canHandleAction(player, action) {
   if (!player) return false
-  if (player.isStreamPlayer) return true
   if (action === "next") return !!player.canGoNext
   if (action === "previous") return !!player.canGoPrevious
   if (action === "play") return !!(player.canPlay || player.canTogglePlaying)
@@ -38,7 +37,7 @@ function canHandleAction(player, action) {
 }
 
 function canCycleSource(player) {
-  return !!(player && (hasMetadata(player) || player.isStreamPlayer) && (player.isPlaying || player.canPlay))
+  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay))
 }
 
 function nodeProps(node) {
@@ -79,7 +78,7 @@ function isPlaybackStream(node) {
   if (!node || !node.isStream || isBlacklistedStream(node)) return false
   var p = nodeProps(node)
 
-  // 1. Filter out notification/event/alert/system sound effects (e.g. Discord, system pings)
+  // 1. Filter out notification/event/alert/system sound effects
   var role = String(p["media.role"] || p["node.role"] || "").toLowerCase()
   if (role === "event" || role === "notification" || role === "alert" || role === "test" || role === "sound-effect") {
     return false
@@ -130,12 +129,11 @@ var APP_FAMILY_MAP = {
   "firefox": ["firefox", "zen", "zen-bin", "librewolf", "floorp", "waterfox", "tor-browser", "gecko"],
   "zen": ["zen", "zen-bin", "firefox", "gecko"],
   "librewolf": ["librewolf", "firefox", "gecko"],
-  "chromium": ["chromium", "chrome", "google-chrome", "google-chrome-stable", "brave", "brave-browser", "edge", "microsoft-edge", "opera", "vivaldi", "electron", "seanime", "seanime-denshi"],
+  "chromium": ["chromium", "chrome", "google-chrome", "google-chrome-stable", "brave", "brave-browser", "edge", "microsoft-edge", "opera", "vivaldi", "electron"],
   "chrome": ["chrome", "google-chrome", "google-chrome-stable", "chromium"],
   "brave": ["brave", "brave-browser", "chromium"],
-  "seanime": ["seanime", "seanime-denshi", "seanime-server", "denshi", "electron", "chromium"],
   "spotify": ["spotify", "spotify-launcher", "spotify-client"],
-  "mpv": ["mpv", "mpv-mpris", "celluloid"],
+  "mpv": ["mpv", "mpv-mpris", "celluloid", "seanime"],
   "vlc": ["vlc"]
 }
 
@@ -198,7 +196,7 @@ function playerHasPlaybackStream(player, playbackStreams) {
 
 function playerKey(player) {
   if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
+  return String(player.dbusName || player.desktopEntry || player.identity || "")
 }
 
 function trackSignature(player) {
@@ -215,14 +213,13 @@ function trackChanged(previousSignature, player) {
   return trackSignature(player) !== String(previousSignature || "")
 }
 
-// Cleans up common ugly tags from web/video players (e.g. YouTube, anime filenames, web sites)
+// Cleans up common ugly tags from media titles (e.g. YouTube, anime filenames, web sites)
 function cleanTitle(rawTitle, rawArtist) {
   var title = String(rawTitle || "").trim()
   if (!title) return ""
 
   // 1. Remove browser / app suffixes
-  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|Dulo TV)$/i, "")
-  title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
   // 2. Remove Anime Release Group tags: [SubsPlease], [Erai-raws], [Judas], etc.
@@ -234,12 +231,12 @@ function cleanTitle(rawTitle, rawArtist) {
   // 3. Remove file extensions
   title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
 
-  // 4. If title is a generic placeholder like "AudioStream" or "playback", return empty so window title can be used
-  if (/^(?:AudioStream|playback|Stream|Audio|Default|Playback|Video)$/i.test(title)) {
-    return ""
+  // 4. Strip duplicate artist prefix if present (e.g. "Daft Punk - Get Lucky")
+  if (rawArtist && title.toLowerCase().indexOf(String(rawArtist).toLowerCase() + " - ") === 0) {
+    title = title.substring(String(rawArtist).length + 3).trim()
   }
 
-  // 5. If title is "Artist - Song", but NOT an episode number like "Anime - 01" or "Show - Ep 2"
+  // 5. If title is "Artist - Song" and no artist was provided, split it
   if (!rawArtist && title.indexOf(" - ") !== -1) {
     var parts = title.split(" - ")
     if (parts.length === 2) {
@@ -263,12 +260,11 @@ function cleanArtist(rawArtist, rawTitle, player) {
     else artist = String(rawArtist).trim()
   }
 
-  if (artist && artist !== "Unknown" && artist !== "undefined" && artist !== "Playback") return artist
+  if (artist && artist !== "Unknown" && artist !== "undefined") return artist
 
   // If artist is missing, check if title had "Artist - Title"
   var title = String(rawTitle || "").trim()
-  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|Dulo TV)$/i, "")
-  title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
   if (title.indexOf(" - ") !== -1) {
@@ -285,31 +281,26 @@ function cleanArtist(rawArtist, rawTitle, player) {
 
   // Fallback to app source name
   var src = sourceName(player)
-  if (src && src !== "Player" && src !== "Media" && src !== "Unknown" && src !== "Playback") return src
+  if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
 
   return ""
 }
 
 function sourceName(player) {
   if (!player) return "Media"
-  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
+  var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
   if (id.indexOf("spotify") !== -1) return "Spotify"
-  if (id.indexOf("seanime") !== -1 || id.indexOf("denshi") !== -1) return "Seanime"
+  if (id.indexOf("seanime") !== -1) return "Seanime"
   if (id.indexOf("mpv") !== -1) return "MPV"
   if (id.indexOf("vlc") !== -1) return "VLC"
   if (id.indexOf("zen") !== -1) return "Zen Browser"
   if (id.indexOf("firefox") !== -1) return "Firefox"
   if (id.indexOf("brave") !== -1) return "Brave"
-  if (id.indexOf("chrome") !== -1) return "Chrome"
-  if (id.indexOf("chromium") !== -1 || id.indexOf("electron") !== -1) {
-    if (id.indexOf("seanime") !== -1) return "Seanime"
-    return "Chromium"
-  }
+  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return "Chrome"
   if (id.indexOf("edge") !== -1) return "Edge"
   if (id.indexOf("cliamp") !== -1) return "cliamp"
   if (id.indexOf("stremio") !== -1) return "Stremio"
   if (id.indexOf("celluloid") !== -1) return "Celluloid"
-  if (id.indexOf("discord") !== -1) return "Discord"
   if (id.indexOf("twitch") !== -1) return "Twitch"
   if (id.indexOf("soundcloud") !== -1) return "SoundCloud"
   if (player.identity && player.identity !== "undefined") return player.identity
@@ -319,16 +310,15 @@ function sourceName(player) {
 
 function sourceIcon(player) {
   if (!player) return "󰝚"
-  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
+  var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
   if (id.indexOf("spotify") !== -1) return "󰓇"
-  if (id.indexOf("seanime") !== -1 || id.indexOf("denshi") !== -1) return "󰚩"
+  if (id.indexOf("seanime") !== -1) return "󰚩"
   if (id.indexOf("mpv") !== -1) return "󰐹"
   if (id.indexOf("vlc") !== -1) return "󰕼"
   if (id.indexOf("zen") !== -1 || id.indexOf("firefox") !== -1) return "󰈹"
   if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1 || id.indexOf("edge") !== -1) return "󰊯"
   if (id.indexOf("cliamp") !== -1) return "󰎆"
   if (id.indexOf("stremio") !== -1 || id.indexOf("celluloid") !== -1) return "󰐹"
-  if (id.indexOf("discord") !== -1) return "󰙯"
   if (id.indexOf("twitch") !== -1) return "󰕧"
   if (id.indexOf("soundcloud") !== -1) return "󰝚"
   return "󰝚"
@@ -344,95 +334,6 @@ function osdMessage(player, fallback) {
   var label = labelFor(player)
   if (label && player.trackArtist) return label + " - " + player.trackArtist
   return label || fallback
-}
-
-function findToplevelForApp(appIdentifier, toplevels) {
-  if (!toplevels || toplevels.length === 0 || !appIdentifier) return null
-  for (var i = 0; i < toplevels.length; i++) {
-    var t = toplevels[i]
-    if (!t) continue
-    var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
-    if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
-      return t
-    }
-  }
-  return null
-}
-
-function findWindowTitleForApp(appIdentifier, toplevels) {
-  var t = findToplevelForApp(appIdentifier, toplevels)
-  return t && t.title ? t.title : ""
-}
-
-// Virtual player wrapper created from an active Pipewire audio stream when no MPRIS player exists
-function createVirtualStreamPlayer(node, toplevels) {
-  if (!node || isBlacklistedStream(node)) return null
-  var p = nodeProps(node)
-  var binary = p["application.process.binary"] || ""
-  var rawApp = p["application.name"] || node.description || p["node.name"] || node.name || "Audio Stream"
-  
-  // Resolve accurate app name (e.g. seanime-denshi / Chromium -> Seanime)
-  var appName = rawApp
-  if (rawApp.toLowerCase().indexOf("seanime") !== -1 || binary.toLowerCase().indexOf("seanime") !== -1) {
-    appName = "Seanime"
-  } else if (rawApp === "Zen" || binary === "zen-bin") {
-    appName = "Zen Browser"
-  }
-
-  // Look up actual toplevel window from Quickshell Wayland Toplevels
-  var targetToplevel = findToplevelForApp(binary || rawApp || appName, toplevels)
-  var winTitle = targetToplevel && targetToplevel.title ? targetToplevel.title : ""
-  var mediaName = p["media.name"] || node.description || ""
-  
-  var resolvedTitle = cleanTitle(mediaName, appName)
-  if (!resolvedTitle && winTitle) {
-    resolvedTitle = cleanTitle(winTitle, appName)
-  }
-  if (!resolvedTitle) {
-    resolvedTitle = winTitle || mediaName || appName
-  }
-
-  var isMuted = Boolean(node.audio && node.audio.muted)
-
-  function triggerVideoToggle() {
-    if (targetToplevel && typeof targetToplevel.activate === "function") {
-      targetToplevel.activate()
-    }
-    if (typeof Quickshell !== "undefined" && Quickshell.execDetached) {
-      Quickshell.execDetached(["wtype", "-k", "space"])
-    }
-  }
-
-  return {
-    isStreamPlayer: true,
-    streamId: String(node.id || node.name || appName),
-    dbusName: "pipewire.stream." + (node.id || node.name || appName),
-    identity: appName,
-    desktopEntry: binary || rawApp,
-    appName: appName,
-    trackTitle: resolvedTitle,
-    trackArtist: cleanArtist("", resolvedTitle, { appName: appName, identity: appName }),
-    trackAlbum: "",
-    trackArtUrl: "",
-    isPlaying: !isMuted,
-    canPlay: true,
-    canPause: true,
-    canTogglePlaying: true,
-    canGoNext: false,
-    canGoPrevious: false,
-    play: function() {
-      if (node.audio) node.audio.muted = false
-      triggerVideoToggle()
-    },
-    pause: function() {
-      if (node.audio) node.audio.muted = true
-      triggerVideoToggle()
-    },
-    togglePlaying: function() {
-      if (node.audio) node.audio.muted = !node.audio.muted
-      triggerVideoToggle()
-    }
-  }
 }
 
 if (typeof module !== "undefined") {
@@ -460,9 +361,6 @@ if (typeof module !== "undefined") {
     sourceName: sourceName,
     sourceIcon: sourceIcon,
     labelFor: labelFor,
-    osdMessage: osdMessage,
-    findToplevelForApp: findToplevelForApp,
-    findWindowTitleForApp: findWindowTitleForApp,
-    createVirtualStreamPlayer: createVirtualStreamPlayer
+    osdMessage: osdMessage
   }
 }
