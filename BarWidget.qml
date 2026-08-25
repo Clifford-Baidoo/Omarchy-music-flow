@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Services.Mpris
 import qs.Ui
 import qs.Commons
@@ -106,10 +107,52 @@ BarWidget {
     return ""
   }
 
-  readonly property string artUrl: {
+  property string verifiedArtUrl: ""
+  readonly property string rawCandidateArtUrl: {
     if (mediaService && mediaService.artUrl) return MediaModel.sanitizeArtUrl(mediaService.artUrl)
     if (!activePlayer) return ""
     return MediaModel.extractArtUrl(activePlayer)
+  }
+
+  readonly property string artUrl: verifiedArtUrl
+  readonly property string artworkCachePath: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/omarchy/music-flow/artwork.cache"
+
+  onRawCandidateArtUrlChanged: {
+    var raw = root.rawCandidateArtUrl
+    if (!raw) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = ""
+      return
+    }
+
+    if (MediaModel.isRasterDataUri(raw)) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = raw
+      return
+    }
+
+    // Remote HTTPS or local file: validate & cache with strict byte limits and magic byte check
+    root.verifiedArtUrl = ""
+    artFetchProc.running = false
+    artFetchProc.command = [
+      "bash", "-c",
+      "set -euo pipefail; URL=\"$1\"; CACHE_FILE=\"$2\"; TMP_FILE=\"${CACHE_FILE}.tmp.$$\"; trap 'rm -f \"${TMP_FILE}\"' EXIT; if [[ \"$URL\" =~ ^https:// ]]; then if ! curl -fsS --max-time 3 --max-filesize 2097152 --proto \"=https\" --proto-redir \"=https\" --max-redirs 3 \"$URL\" -o \"${TMP_FILE}\" 2>/dev/null; then exit 1; fi; elif [[ \"$URL\" =~ ^file://(/.*) ]] || [[ \"$URL\" =~ ^(/.*) ]]; then FILE_PATH=\"${BASH_REMATCH[1]}\"; if [[ ! -f \"$FILE_PATH\" || -L \"$FILE_PATH\" ]]; then exit 1; fi; FILE_SIZE=$(stat -c %s \"$FILE_PATH\" 2>/dev/null || echo 99999999); if (( FILE_SIZE > 2097152 || FILE_SIZE < 4 )); then exit 1; fi; head -c 2097152 \"$FILE_PATH\" > \"${TMP_FILE}\"; else exit 1; fi; MAGIC=$(od -N 12 -A n -t x1 \"${TMP_FILE}\" 2>/dev/null | tr -d \" \\n\"); if [[ \"$MAGIC\" =~ ^89504e470d0a1a0a ]] || [[ \"$MAGIC\" =~ ^ffd8 ]] || [[ \"$MAGIC\" =~ ^47494638 ]] || [[ \"$MAGIC\" =~ ^424d ]] || [[ \"$MAGIC\" =~ ^52494646.{8}57454250 ]]; then mkdir -p \"$(dirname \"${CACHE_FILE}\")\"; mv -f \"${TMP_FILE}\" \"${CACHE_FILE}\"; exit 0; else exit 1; fi",
+      "--",
+      raw,
+      root.artworkCachePath
+    ]
+    artFetchProc.running = true
+  }
+
+  Process {
+    id: artFetchProc
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.verifiedArtUrl = "file://" + root.artworkCachePath + "?t=" + Date.now()
+      } else {
+        root.verifiedArtUrl = ""
+      }
+    }
   }
 
   property bool popupOpen: false

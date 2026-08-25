@@ -103,7 +103,48 @@ Item {
   }
 
   readonly property string album: activePlayer && activePlayer.trackAlbum ? MediaModel.cleanAlbum(activePlayer.trackAlbum) : (activePlayer && activePlayer.metadata && activePlayer.metadata["xesam:album"] ? MediaModel.cleanAlbum(activePlayer.metadata["xesam:album"]) : "")
-  readonly property string artUrl: activePlayer ? MediaModel.extractArtUrl(activePlayer) : ""
+  property string verifiedArtUrl: ""
+  readonly property string rawCandidateArtUrl: activePlayer ? MediaModel.extractArtUrl(activePlayer) : ""
+  readonly property string artUrl: verifiedArtUrl
+  readonly property string artworkCachePath: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/omarchy/music-flow/artwork.cache"
+
+  onRawCandidateArtUrlChanged: {
+    var raw = root.rawCandidateArtUrl
+    if (!raw) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = ""
+      return
+    }
+
+    if (MediaModel.isRasterDataUri(raw)) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = raw
+      return
+    }
+
+    root.verifiedArtUrl = ""
+    artFetchProc.running = false
+    artFetchProc.command = [
+      "bash", "-c",
+      "set -euo pipefail; URL=\"$1\"; CACHE_FILE=\"$2\"; TMP_FILE=\"${CACHE_FILE}.tmp.$$\"; trap 'rm -f \"${TMP_FILE}\"' EXIT; if [[ \"$URL\" =~ ^https:// ]]; then if ! curl -fsS --max-time 3 --max-filesize 2097152 --proto \"=https\" --proto-redir \"=https\" --max-redirs 3 \"$URL\" -o \"${TMP_FILE}\" 2>/dev/null; then exit 1; fi; elif [[ \"$URL\" =~ ^file://(/.*) ]] || [[ \"$URL\" =~ ^(/.*) ]]; then FILE_PATH=\"${BASH_REMATCH[1]}\"; if [[ ! -f \"$FILE_PATH\" || -L \"$FILE_PATH\" ]]; then exit 1; fi; FILE_SIZE=$(stat -c %s \"$FILE_PATH\" 2>/dev/null || echo 99999999); if (( FILE_SIZE > 2097152 || FILE_SIZE < 4 )); then exit 1; fi; head -c 2097152 \"$FILE_PATH\" > \"${TMP_FILE}\"; else exit 1; fi; MAGIC=$(od -N 12 -A n -t x1 \"${TMP_FILE}\" 2>/dev/null | tr -d \" \\n\"); if [[ \"$MAGIC\" =~ ^89504e470d0a1a0a ]] || [[ \"$MAGIC\" =~ ^ffd8 ]] || [[ \"$MAGIC\" =~ ^47494638 ]] || [[ \"$MAGIC\" =~ ^424d ]] || [[ \"$MAGIC\" =~ ^52494646.{8}57454250 ]]; then mkdir -p \"$(dirname \"${CACHE_FILE}\")\"; mv -f \"${TMP_FILE}\" \"${CACHE_FILE}\"; exit 0; else exit 1; fi",
+      "--",
+      raw,
+      root.artworkCachePath
+    ]
+    artFetchProc.running = true
+  }
+
+  Process {
+    id: artFetchProc
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.verifiedArtUrl = "file://" + root.artworkCachePath + "?t=" + Date.now()
+      } else {
+        root.verifiedArtUrl = ""
+      }
+    }
+  }
+
   readonly property string identity: activePlayer ? MediaModel.sanitizeText(activePlayer.identity || activePlayer.desktopEntry || "") : ""
 
   function isProxyPlayer(player) {
@@ -585,7 +626,7 @@ Item {
       title: finalTitle,
       artist: finalArtist,
       album: finalAlbum,
-      artUrl: p ? MediaModel.extractArtUrl(p) : "",
+      artUrl: root.artUrl,
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,
       canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false

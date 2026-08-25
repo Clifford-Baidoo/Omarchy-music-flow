@@ -500,6 +500,31 @@ function isAllowedHttpsUrl(urlString) {
   })
 }
 
+function isRasterDataUri(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== "string") return false
+  if (rawUrl.length > MAX_DATA_IMAGE_LENGTH) return false
+
+  var match = rawUrl.match(/^data:image\/(?:png|jpe?g|webp|gif|bmp);base64,([A-Za-z0-9+/=]+)$/i)
+  if (!match) return false
+
+  var b64 = match[1]
+  // Check raster image magic headers in base64:
+  // PNG: iVBORw0KGgo (\x89PNG\r\n\x1a\n)
+  // JPEG: /9j/ (\xff\xd8\xff)
+  // GIF: R0lGOD (GIF87a / GIF89a)
+  // WebP: UklGR (RIFF)
+  // BMP: Qk (BM)
+  if (b64.indexOf("iVBORw0KGgo") === 0 ||
+      b64.indexOf("/9j/") === 0 ||
+      b64.indexOf("R0lGOD") === 0 ||
+      b64.indexOf("UklGR") === 0 ||
+      b64.indexOf("Qk") === 0) {
+    return true
+  }
+
+  return false
+}
+
 // Validates artwork URI against strictly permitted image schemes, safe CDN hosts, and byte limits
 function sanitizeArtUrl(rawUrl) {
   if (!rawUrl) return ""
@@ -509,11 +534,9 @@ function sanitizeArtUrl(rawUrl) {
   // Reject control characters and newlines
   if (/[\x00-\x1f\x7f]/.test(url)) return ""
 
-  // 1. Data URIs: Strictly RASTER image MIME types only (PNG, JPEG, WebP, GIF, BMP).
-  // SVG (svg+xml) is explicitly rejected to prevent active XML / resource-referencing exploits.
+  // 1. Data URIs: Strictly RASTER image MIME types only with valid base64 magic headers & bounded length
   if (url.indexOf("data:image/") === 0) {
-    if (url.length > MAX_DATA_IMAGE_LENGTH) return ""
-    if (/^data:image\/(?:png|jpe?g|webp|gif|bmp);base64,[A-Za-z0-9+/=]+$/i.test(url)) {
+    if (isRasterDataUri(url)) {
       return url
     }
     return ""
@@ -691,6 +714,7 @@ if (typeof module !== "undefined") {
     cleanTitle: cleanTitle,
     cleanArtist: cleanArtist,
     cleanAlbum: cleanAlbum,
+    isRasterDataUri: isRasterDataUri,
     sanitizeArtUrl: sanitizeArtUrl,
     extractArtUrl: extractArtUrl,
     detectPlatform: detectPlatform,
