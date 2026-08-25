@@ -13,6 +13,8 @@ Item {
   property var playerStartedAt: ({})
   property var pendingTrackOsd: null
   property int playSerial: 0
+  // Bumped whenever any player's isPlaying changes — forces activePlayer to re-evaluate
+  property int stateVersion: 0
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
@@ -28,11 +30,16 @@ Item {
 
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
-  readonly property var activePlayer: selectActivePlayer()
+  // stateVersion + preferredPlayerKey are read here so QML re-evaluates activePlayer
+  // whenever any player starts/stops playing or the user picks a different source.
+  readonly property var activePlayer: { var _sv = stateVersion; var _pk = preferredPlayerKey; return selectActivePlayer() }
 
+  // Explicitly track each player's isPlaying to force reactive re-evaluation
+  // when a player pauses or resumes without the activePlayer reference changing.
   readonly property bool isPlaying: {
     if (!activePlayer) return false
-    if (activePlayer.isPlaying) return true
+    var playing = activePlayer.isPlaying  // explicit dependency
+    if (playing) return true
     return MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
   }
 
@@ -161,6 +168,7 @@ Item {
 
     playSerial = serial
     playerStartedAt = next
+    stateVersion += 1  // bump to force activePlayer re-evaluation
   }
 
   function orderedSourcePlayers() {
@@ -234,11 +242,34 @@ Item {
   }
 
   function selectActivePlayer() {
-    // 1. User explicitly selected a preferred player
+    // 1. User explicitly selected a preferred player — BUT only stick to it
+    //    if it is currently playing. If a different player starts playing,
+    //    auto-yield to the newly-playing player.
     if (preferredPlayerKey) {
       var preferred = playerForKey(preferredPlayerKey)
       if (preferred && hasMetadata(preferred)) {
-        return preferred
+        var preferredIsPlaying = preferred.isPlaying || playerHasActiveStream(preferred)
+        if (preferredIsPlaying) {
+          // Preferred player is still playing — keep it
+          return preferred
+        }
+        // Preferred player is paused — check if any OTHER player started playing
+        var anyOtherPlaying = false
+        for (var j = 0; j < players.length; j++) {
+          var candidate = players[j]
+          if (!candidate || isProxyPlayer(candidate)) continue
+          if (playerCanonicalKey(candidate) === preferredPlayerKey) continue
+          if (candidate.isPlaying || playerHasActiveStream(candidate)) {
+            anyOtherPlaying = true
+            break
+          }
+        }
+        if (!anyOtherPlaying) {
+          // Nothing else is playing — keep showing the paused preferred player
+          return preferred
+        }
+        // Something else started playing — clear preference and auto-switch
+        preferredPlayerKey = ""
       }
     }
 
@@ -250,7 +281,7 @@ Item {
     var playingMpris = oldestPlayingPlayer(false)
     if (playingMpris) return playingMpris
 
-    // 4. Fallbacks (first available non-proxy player with metadata)
+    // 4. Fallback: first available non-proxy player with metadata
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (p && !isProxyPlayer(p) && hasMetadata(p)) return p
