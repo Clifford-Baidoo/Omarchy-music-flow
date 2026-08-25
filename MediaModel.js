@@ -225,8 +225,6 @@ function playerKey(player) {
 
 function playerCanonicalKey(player) {
   if (!player) return ""
-  if (player.isStreamPlayer && player.streamId) return player.streamId
-
   var dbus = String(player.dbusName || "").toLowerCase()
   var desktop = String(player.desktopEntry || "").toLowerCase()
   var identity = String(player.identity || "").toLowerCase()
@@ -270,10 +268,10 @@ function cleanTitle(rawTitle, rawArtist) {
   title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
-  // 3. Remove generic site taglines
+  // 3. Remove generic site taglines & homepages
   title = title.replace(/\s*[-—|•]\s*Stream Movies & TV Shows.*$/i, "")
-  title = title.replace(/\s*\|\s*Watch Movies Online.*$/i, "")
-  title = title.replace(/^FMovies\s*\|\s*/i, "")
+  title = title.replace(/\s*[-—|•|\|]\s*Watch Movies (?:online )?(?:for )?free.*$/i, "")
+  title = title.replace(/^FMovies\s*[-—|•|\|]\s*/i, "")
   title = title.replace(/\s*::\s*.*$/i, "")
 
   // 4. Remove streaming filler phrases
@@ -300,7 +298,12 @@ function cleanTitle(rawTitle, rawArtist) {
   // 9. Clean up multiple consecutive spaces
   title = title.replace(/\s{2,}/g, " ").trim()
 
-  // 10. If title had "Artist - Title", split it unless right side is episode/season
+  // 10. If title is literally just the site name or domain, show "Streaming Video"
+  if (/^(?:dulo\.gd|dulo|fmovies(?:\.to|\.ps|\.llc)?|animepahe|hianime|123movies|watch movies online for free)$/i.test(title)) {
+    return "Streaming Video"
+  }
+
+  // 11. If title had "Artist - Title", split it unless right side is episode/season
   if (!rawArtist && title.indexOf(" - ") !== -1) {
     var parts = title.split(" - ")
     if (parts.length === 2) {
