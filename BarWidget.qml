@@ -57,9 +57,10 @@ BarWidget {
 
   readonly property var activePlayer: mediaService && mediaService.activePlayer ? mediaService.activePlayer : findFallbackActivePlayer()
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
+  readonly property bool isPlaying: mediaService ? mediaService.isPlaying : (activePlayer && activePlayer.isPlaying)
 
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(activePlayer.isPlaying) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
-  readonly property string playIcon: activePlayer && activePlayer.isPlaying ? "󰏤" : "󰐊"
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(isPlaying) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
+  readonly property string playIcon: isPlaying ? "󰏤" : "󰐊"
   
   readonly property string title: {
     if (mediaService && mediaService.title) return mediaService.title
@@ -145,11 +146,11 @@ BarWidget {
   }
 
   function sourceName(player) {
-    return MediaModel.sourceName(player)
+    return MediaModel.sourceName(player, mediaService ? mediaService.activeWinTitle : "")
   }
 
   function sourceIcon(player) {
-    return MediaModel.sourceIcon(player)
+    return MediaModel.sourceIcon(player, mediaService ? mediaService.activeWinTitle : "")
   }
 
   visible: true
@@ -188,7 +189,7 @@ BarWidget {
       property real phase: 0
 
       NumberAnimation on phase {
-        running: Boolean(root.activePlayer && root.activePlayer.isPlaying)
+        running: root.isPlaying
         from: 0
         to: Math.PI * 2
         duration: 1800
@@ -203,8 +204,8 @@ BarWidget {
         if (width <= 0 || height <= 0) return
 
         var midY = height / 2
-        var isPlaying = Boolean(root.activePlayer && root.activePlayer.isPlaying)
-        var amp = isPlaying ? height * 0.32 : 0
+        var isPlayingNow = root.isPlaying
+        var amp = isPlayingNow ? height * 0.32 : 0
 
         // Primary flowing wave
         ctx.lineWidth = 1.5
@@ -212,14 +213,14 @@ BarWidget {
         ctx.beginPath()
         for (var x = 0; x <= width; x += 3) {
           var k = (x / width) * Math.PI * 4
-          var y = midY + (isPlaying ? Math.sin(k + phase) * Math.cos(k * 0.5 + phase * 0.8) * amp : 0)
+          var y = midY + (isPlayingNow ? Math.sin(k + phase) * Math.cos(k * 0.5 + phase * 0.8) * amp : 0)
           if (x === 0) ctx.moveTo(x, y)
           else ctx.lineTo(x, y)
         }
         ctx.stroke()
 
         // Secondary harmonic flowing wave
-        if (isPlaying) {
+        if (isPlayingNow) {
           ctx.lineWidth = 1.0
           ctx.strokeStyle = root.bar ? root.bar.barForeground : Color.foreground
           ctx.beginPath()
@@ -242,7 +243,7 @@ BarWidget {
       Text {
         anchors.centerIn: parent
         text: "󰝚"
-        color: (root.activePlayer && root.activePlayer.isPlaying) ? Color.accent : (clickArea.containsMouse ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground))
+        color: root.isPlaying ? Color.accent : (clickArea.containsMouse ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground))
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
         font.bold: true
@@ -262,7 +263,7 @@ BarWidget {
         id: glyph
         anchors.verticalCenter: parent.verticalCenter
         text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
-        color: (root.activePlayer && root.activePlayer.isPlaying) ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4))
+        color: root.isPlaying ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4))
         font.family: root.bar ? root.bar.fontFamily : Style.font.family
         font.pixelSize: Style.font.body
         font.bold: true
@@ -500,12 +501,12 @@ BarWidget {
         }
 
         Button {
-          iconText: root.activePlayer && root.activePlayer.isPlaying ? "󰏤" : "󰐊"
+          iconText: root.isPlaying ? "󰏤" : "󰐊"
           foreground: Color.accent
           horizontalPadding: Style.spacing.panelGap
           verticalPadding: Style.spacing.controlPaddingY
           iconSize: Style.font.iconLarge
-          enabled: Boolean(root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause))
+          enabled: Boolean(root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause || root.isPlaying))
           opacity: enabled ? 1.0 : 0.4
           onClicked: root.runAction("playPause", root.activePlayer)
         }
@@ -641,7 +642,7 @@ BarWidget {
               }
 
               Text {
-                text: sourceRow.player && sourceRow.player.isPlaying ? "󰏤" : "󰐊"
+                text: (sourceRow.player && sourceRow.player.isPlaying) ? "󰏤" : "󰐊"
                 color: sourceRow.selected ? Color.accent : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.bodySmall

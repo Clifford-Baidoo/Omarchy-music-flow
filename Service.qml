@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
+import Quickshell.Wayland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -16,6 +17,13 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
+  readonly property var toplevels: {
+    try {
+      return ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
+    } catch (e) {
+      return []
+    }
+  }
 
   readonly property var playbackStreams: {
     var list = []
@@ -29,14 +37,38 @@ Item {
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying))
+
+  readonly property string activeWinTitle: {
+    if (!activePlayer) return ""
+    return MediaModel.findWindowTitleForApp(activePlayer.desktopEntry || activePlayer.identity || "", root.toplevels)
+  }
+
+  readonly property bool isPlaying: {
+    if (!activePlayer) return false
+    if (activePlayer.isPlaying) return true
+    return MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
+  }
+
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || isPlaying)
   
   readonly property string title: {
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
+    var hasActiveStream = MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
+
+    // If browser is actively playing an embedded video on an anime/streaming site, prioritize page title
+    if (hasActiveStream && root.activeWinTitle) {
+      var winClean = MediaModel.cleanTitle(root.activeWinTitle, a)
+      if (winClean) return winClean
+    }
+
     var cleaned = MediaModel.cleanTitle(t, a)
     if (cleaned) return cleaned
+    if (root.activeWinTitle) {
+      var winFallback = MediaModel.cleanTitle(root.activeWinTitle, a)
+      if (winFallback) return winFallback
+    }
     return activePlayer.identity || activePlayer.desktopEntry || "Media Playing"
   }
 
@@ -44,7 +76,7 @@ Item {
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
-    return MediaModel.cleanArtist(a, t, activePlayer)
+    return MediaModel.cleanArtist(a, t, activePlayer, root.activeWinTitle)
   }
 
   readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
@@ -99,6 +131,10 @@ Item {
     return MediaModel.playerHasPlaybackStream(player, playbackStreams)
   }
 
+  function playerHasActiveStream(player) {
+    return MediaModel.playerHasActiveStream(player, playbackStreams)
+  }
+
   function playerKey(player) {
     return MediaModel.playerKey(player)
   }
@@ -135,7 +171,8 @@ Item {
       if (!key) continue
 
       alive[key] = true
-      if (!p.isPlaying) continue
+      var isPlay = p.isPlaying || playerHasActiveStream(p)
+      if (!isPlay) continue
 
       if (playerStartedAt[key] === undefined) {
         serial += 1
@@ -167,8 +204,10 @@ Item {
     }
 
     list.sort(function(a, b) {
-      if (!!a.isPlaying !== !!b.isPlaying) return a.isPlaying ? -1 : 1
-      if (a.isPlaying && b.isPlaying) {
+      var aPlay = a.isPlaying || playerHasActiveStream(a)
+      var bPlay = b.isPlaying || playerHasActiveStream(b)
+      if (!!aPlay !== !!bPlay) return aPlay ? -1 : 1
+      if (aPlay && bPlay) {
         var orderDelta = playerOrder(a, 1000) - playerOrder(b, 1000)
         if (orderDelta !== 0) return orderDelta
       }
@@ -204,7 +243,8 @@ Item {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
 
-      if (p.isPlaying) {
+      var isPlay = p.isPlaying || playerHasActiveStream(p)
+      if (isPlay) {
         if (requirePlaybackStream && !playerHasPlaybackStream(p)) continue
 
         var order = playerOrder(p, i + 1000)
@@ -260,11 +300,11 @@ Item {
   }
 
   function labelFor(player) {
-    return MediaModel.labelFor(player)
+    return MediaModel.labelFor(player, root.activeWinTitle)
   }
 
   function osdMessage(player, fallback) {
-    return MediaModel.osdMessage(player, fallback)
+    return MediaModel.osdMessage(player, fallback, root.activeWinTitle)
   }
 
   function trackSignature(player) {
@@ -364,14 +404,14 @@ Item {
     index = (index + delta + list.length) % list.length
     var current = activePlayer
     var next = list[index]
-    var currentWasPlaying = current && current.isPlaying
+    var currentWasPlaying = current && (current.isPlaying || playerHasActiveStream(current))
     var currentKey = playerCanonicalKey(current)
     var nextKey = playerCanonicalKey(next)
 
     preferredPlayerKey = nextKey
 
     if (transferPlayback && currentWasPlaying && next && nextKey !== currentKey) {
-      var nextWasPlaying = next.isPlaying
+      var nextWasPlaying = next.isPlaying || playerHasActiveStream(next)
       var nextStarted = nextWasPlaying || playPlayer(next)
       if (nextStarted) pausePlayer(current)
     }
@@ -440,8 +480,9 @@ Item {
         handled = true
       }
     } else if (action === "playPause") {
-      actionLabel = player && player.isPlaying ? "Pause" : "Play"
-      iconName = player && player.isPlaying ? "media-pause" : "media-play"
+      var isCurrentlyPlaying = player && (player.isPlaying || playerHasActiveStream(player))
+      actionLabel = isCurrentlyPlaying ? "Pause" : "Play"
+      iconName = isCurrentlyPlaying ? "media-pause" : "media-play"
       if (player && typeof player.playPause === "function") {
         player.playPause()
         handled = true
@@ -489,7 +530,7 @@ Item {
     return JSON.stringify({
       hasPlayer: p !== null,
       hasMedia: root.hasMedia,
-      playing: p ? !!p.isPlaying : false,
+      playing: root.isPlaying,
       identity: p ? (p.identity || "") : "",
       desktopEntry: p ? (p.desktopEntry || "") : "",
       title: root.title,

@@ -194,12 +194,34 @@ function playerHasPlaybackStream(player, playbackStreams) {
   return false
 }
 
+function playerHasActiveStream(player, playbackStreams) {
+  if (!player) return false
+  var pLabel = playerAppLabel(player)
+  var pDbus = String(player.dbusName || "")
+
+  var streams = Array.isArray(playbackStreams) ? playbackStreams : []
+  for (var i = 0; i < streams.length; i++) {
+    var sNode = streams[i]
+    if (!sNode) continue
+    var p = nodeProps(sNode)
+    var isCorked = p["pulse.corked"] === "true" || p["pulse.corked"] === true
+    var isMuted = sNode.audio && sNode.audio.muted
+    if (isCorked || isMuted) continue
+
+    var sLabel = rawStreamLabel(sNode)
+    if (areAppsInSameFamily(pLabel, sLabel) || areAppsInSameFamily(pDbus, sLabel)) return true
+    var binary = String(p["application.process.binary"] || "")
+    if (binary && (areAppsInSameFamily(pLabel, binary) || areAppsInSameFamily(pDbus, binary))) return true
+  }
+
+  return false
+}
+
 function playerKey(player) {
   if (!player) return ""
   return String(player.dbusName || player.desktopEntry || player.identity || "")
 }
 
-// Canonical unique key that groups instance duplicates (e.g. mpv and mpv.instance-XYZ -> "mpv")
 function playerCanonicalKey(player) {
   if (!player) return ""
   var dbus = String(player.dbusName || "").toLowerCase()
@@ -232,7 +254,7 @@ function trackChanged(previousSignature, player) {
   return trackSignature(player) !== String(previousSignature || "")
 }
 
-// Cleans up common ugly tags from media titles (e.g. YouTube, anime filenames, web sites)
+// Cleans up common ugly tags from media titles (e.g. Animepahe, YouTube, anime filenames, web sites)
 function cleanTitle(rawTitle, rawArtist) {
   var title = String(rawTitle || "").trim()
   if (!title) return ""
@@ -240,17 +262,18 @@ function cleanTitle(rawTitle, rawArtist) {
   // 1. Remove browser / app suffixes
   title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
+  title = title.replace(/\s*::\s*.*$/i, "") // Strip Animepahe tagline
 
   // 2. Remove Anime Release Group tags: [SubsPlease], [Erai-raws], [Judas], etc.
   title = title.replace(/^\[[^\]]+\]\s*/g, "")
-  title = title.replace(/\s*\[[0-9a-fA-F]{8}\]/g, "") // CRC32 hashes like [ABCD1234]
+  title = title.replace(/\s*\[[0-9a-fA-F]{8}\]/g, "") // CRC32 hashes
   title = title.replace(/\s*\[(?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\]/gi, "")
   title = title.replace(/\s*\((?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\)/gi, "")
 
   // 3. Remove file extensions
   title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
 
-  // 4. Strip duplicate artist prefix if present (e.g. "Daft Punk - Get Lucky")
+  // 4. Strip duplicate artist prefix if present
   if (rawArtist && title.toLowerCase().indexOf(String(rawArtist).toLowerCase() + " - ") === 0) {
     title = title.substring(String(rawArtist).length + 3).trim()
   }
@@ -272,7 +295,7 @@ function cleanTitle(rawTitle, rawArtist) {
 }
 
 // Derives a clean artist or source badge
-function cleanArtist(rawArtist, rawTitle, player) {
+function cleanArtist(rawArtist, rawTitle, player, winTitle) {
   var artist = ""
   if (rawArtist) {
     if (Array.isArray(rawArtist)) artist = rawArtist.join(", ")
@@ -298,8 +321,8 @@ function cleanArtist(rawArtist, rawTitle, player) {
     }
   }
 
-  // Fallback to detected platform / app name
-  var src = sourceName(player)
+  // Fallback to detected platform name
+  var src = sourceName(player, winTitle)
   if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
 
   return ""
@@ -325,12 +348,12 @@ function extractArtUrl(player) {
 }
 
 // Identifies the exact playing website / streaming service or native desktop app
-function detectPlatform(player) {
+function detectPlatform(player, winTitle) {
   if (!player) return { name: "Media", icon: "󰝚" }
 
   var meta = player.metadata || {}
   var url = String(meta["xesam:url"] || player.url || "").toLowerCase()
-  var rawTitle = String(player.trackTitle || meta["xesam:title"] || "").toLowerCase()
+  var rawTitle = (String(player.trackTitle || meta["xesam:title"] || "") + " " + String(winTitle || "")).toLowerCase()
   var artUrl = String(player.trackArtUrl || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
   var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
 
@@ -349,10 +372,12 @@ function detectPlatform(player) {
     return { name: "Twitch", icon: "󰕧" }
   }
 
-  // 4. SoundCloud
-  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) {
-    return { name: "SoundCloud", icon: "󰝚" }
-  }
+  // 4. Anime streaming sites (Animepahe, HiAnime, 9anime, Gogoanime, Zoro, etc.)
+  if (rawTitle.indexOf("animepahe") !== -1) return { name: "Animepahe", icon: "󰚩" }
+  if (rawTitle.indexOf("hianime") !== -1) return { name: "HiAnime", icon: "󰚩" }
+  if (rawTitle.indexOf("9anime") !== -1 || rawTitle.indexOf("aniwave") !== -1) return { name: "AniWave", icon: "󰚩" }
+  if (rawTitle.indexOf("gogoanime") !== -1 || rawTitle.indexOf("anitaku") !== -1) return { name: "Gogoanime", icon: "󰚩" }
+  if (rawTitle.indexOf("dulo.gd") !== -1 || rawTitle.indexOf("dulo tv") !== -1) return { name: "Dulo", icon: "󰐹" }
 
   // 5. Crunchyroll
   if (url.indexOf("crunchyroll.com") !== -1 || rawTitle.indexOf("crunchyroll") !== -1) {
@@ -364,19 +389,24 @@ function detectPlatform(player) {
     return { name: "Netflix", icon: "󰝆" }
   }
 
-  // 7. Bandcamp
+  // 7. SoundCloud
+  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) {
+    return { name: "SoundCloud", icon: "󰝚" }
+  }
+
+  // 8. Bandcamp
   if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) {
     return { name: "Bandcamp", icon: "󰝚" }
   }
 
-  // 8. Dedicated media players
+  // 9. Dedicated media players
   if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
   if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
   if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
   if (id.indexOf("stremio") !== -1) return { name: "Stremio", icon: "󰐹" }
   if (id.indexOf("celluloid") !== -1) return { name: "Celluloid", icon: "󰐹" }
 
-  // 9. Fallbacks to browser app names
+  // 10. Fallbacks to browser app names
   if (id.indexOf("zen") !== -1) return { name: "Zen Browser", icon: "󰈹" }
   if (id.indexOf("firefox") !== -1) return { name: "Firefox", icon: "󰈹" }
   if (id.indexOf("brave") !== -1) return { name: "Brave", icon: "󰊯" }
@@ -387,24 +417,37 @@ function detectPlatform(player) {
   return { name: fallbackName, icon: "󰝚" }
 }
 
-function sourceName(player) {
-  return detectPlatform(player).name
+function sourceName(player, winTitle) {
+  return detectPlatform(player, winTitle).name
 }
 
-function sourceIcon(player) {
-  return detectPlatform(player).icon
+function sourceIcon(player, winTitle) {
+  return detectPlatform(player, winTitle).icon
 }
 
-function labelFor(player) {
+function labelFor(player, winTitle) {
   if (!player) return ""
-  return player.trackTitle || player.identity || player.desktopEntry || sourceName(player) || ""
+  return player.trackTitle || player.identity || player.desktopEntry || sourceName(player, winTitle) || ""
 }
 
-function osdMessage(player, fallback) {
+function osdMessage(player, fallback, winTitle) {
   if (!player) return fallback
-  var label = labelFor(player)
+  var label = labelFor(player, winTitle)
   if (label && player.trackArtist) return label + " - " + player.trackArtist
   return label || fallback
+}
+
+function findWindowTitleForApp(appIdentifier, toplevels) {
+  if (!toplevels || toplevels.length === 0 || !appIdentifier) return ""
+  for (var i = 0; i < toplevels.length; i++) {
+    var t = toplevels[i]
+    if (!t) continue
+    var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
+    if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
+      if (t.title) return t.title
+    }
+  }
+  return ""
 }
 
 if (typeof module !== "undefined") {
@@ -424,6 +467,7 @@ if (typeof module !== "undefined") {
     areAppsInSameFamily: areAppsInSameFamily,
     playerAppLabel: playerAppLabel,
     playerHasPlaybackStream: playerHasPlaybackStream,
+    playerHasActiveStream: playerHasActiveStream,
     playerKey: playerKey,
     playerCanonicalKey: playerCanonicalKey,
     trackSignature: trackSignature,
@@ -435,6 +479,7 @@ if (typeof module !== "undefined") {
     sourceName: sourceName,
     sourceIcon: sourceIcon,
     labelFor: labelFor,
-    osdMessage: osdMessage
+    osdMessage: osdMessage,
+    findWindowTitleForApp: findWindowTitleForApp
   }
 }
