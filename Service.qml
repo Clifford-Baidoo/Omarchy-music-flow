@@ -13,8 +13,6 @@ Item {
   property var playerStartedAt: ({})
   property var pendingTrackOsd: null
   property int playSerial: 0
-  // Bumped whenever any player's isPlaying changes — forces activePlayer to re-evaluate
-  property int stateVersion: 0
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
@@ -28,17 +26,37 @@ Item {
     return list
   }
 
+  // This string is built by reading every player's isPlaying in a single reactive
+  // expression. QML tracks each player.isPlaying as a live dependency, so any
+  // pause/resume on any player causes this to change, which cascades to activePlayer.
+  readonly property string playingKeys: {
+    var parts = []
+    var ps = players
+    for (var i = 0; i < ps.length; i++) {
+      var p = ps[i]
+      if (p && !MediaModel.isProxyPlayer(p)) {
+        // Reading p.isPlaying here registers it as a reactive dependency
+        parts.push((p.desktopEntry || p.identity || p.dbusName || "") + ":" + (p.isPlaying ? "1" : "0"))
+      }
+    }
+    return parts.join(",")
+  }
+
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
-  // stateVersion + preferredPlayerKey are read here so QML re-evaluates activePlayer
-  // whenever any player starts/stops playing or the user picks a different source.
-  readonly property var activePlayer: { var _sv = stateVersion; var _pk = preferredPlayerKey; return selectActivePlayer() }
+  // playingKeys + preferredPlayerKey are read so QML re-evaluates activePlayer
+  // the moment any player pauses/resumes or the user picks a different source.
+  readonly property var activePlayer: {
+    var _pk = preferredPlayerKey
+    var _pks = playingKeys  // reactive dependency on all players' isPlaying
+    return selectActivePlayer()
+  }
 
-  // Explicitly track each player's isPlaying to force reactive re-evaluation
-  // when a player pauses or resumes without the activePlayer reference changing.
+  // isPlaying re-evaluates reactively because it reads activePlayer.isPlaying
+  // directly, and activePlayer itself changes whenever playingKeys changes.
   readonly property bool isPlaying: {
     if (!activePlayer) return false
-    var playing = activePlayer.isPlaying  // explicit dependency
+    var playing = activePlayer.isPlaying
     if (playing) return true
     return MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
   }
@@ -168,7 +186,6 @@ Item {
 
     playSerial = serial
     playerStartedAt = next
-    stateVersion += 1  // bump to force activePlayer re-evaluation
   }
 
   function orderedSourcePlayers() {
