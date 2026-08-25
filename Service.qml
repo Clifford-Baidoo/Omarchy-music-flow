@@ -13,6 +13,9 @@ Item {
   property var playerStartedAt: ({})
   property var pendingTrackOsd: null
   property int playSerial: 0
+  // Bumped by signal connections whenever any player's playback state changes.
+  // This forces activePlayer (which reads this) to re-evaluate reactively.
+  property int playbackVersion: 0
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
@@ -26,39 +29,42 @@ Item {
     return list
   }
 
-  // This string is built by reading every player's isPlaying in a single reactive
-  // expression. QML tracks each player.isPlaying as a live dependency, so any
-  // pause/resume on any player causes this to change, which cascades to activePlayer.
-  readonly property string playingKeys: {
-    var parts = []
-    var ps = players
-    for (var i = 0; i < ps.length; i++) {
-      var p = ps[i]
-      if (p && !MediaModel.isProxyPlayer(p)) {
-        // Reading p.isPlaying here registers it as a reactive dependency
-        parts.push((p.desktopEntry || p.identity || p.dbusName || "") + ":" + (p.isPlaying ? "1" : "0"))
-      }
-    }
-    return parts.join(",")
-  }
-
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
-  // playingKeys + preferredPlayerKey are read so QML re-evaluates activePlayer
-  // the moment any player pauses/resumes or the user picks a different source.
+  // playbackVersion + preferredPlayerKey are explicit QML dependencies here.
+  // playbackVersion changes whenever any player emits playbackStateChanged (via
+  // the Instantiator below), so activePlayer re-evaluates on every pause/resume.
   readonly property var activePlayer: {
+    var _v = playbackVersion
     var _pk = preferredPlayerKey
-    var _pks = playingKeys  // reactive dependency on all players' isPlaying
     return selectActivePlayer()
   }
 
-  // isPlaying re-evaluates reactively because it reads activePlayer.isPlaying
-  // directly, and activePlayer itself changes whenever playingKeys changes.
+  // isPlaying reads activePlayer.isPlaying. Since activePlayer re-evaluates on
+  // every playbackVersion bump, this is always current.
   readonly property bool isPlaying: {
     if (!activePlayer) return false
     var playing = activePlayer.isPlaying
     if (playing) return true
     return MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
+  }
+
+  // Per-player signal connections — use Mpris.players (UntypedObjectModel) directly
+  // as the Instantiator model so Qt creates one Connections delegate per player.
+  // root.players (.values) is a plain JS array which Instantiator cannot iterate.
+  Instantiator {
+    model: Mpris.players
+    delegate: Connections {
+      required property var modelData
+      target: modelData
+      function onIsPlayingChanged() {
+        root.syncPlayingOrder()
+        root.playbackVersion++
+      }
+      function onTrackChanged() {
+        root.playbackVersion++
+      }
+    }
   }
 
   readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || isPlaying)
@@ -530,14 +536,8 @@ Item {
   Component.onCompleted: root.syncPlayingOrder()
   onPlayersChanged: root.syncPlayingOrder()
 
-  Instantiator {
-    model: root.players
-    delegate: Connections {
-      required property var modelData
-      target: modelData
-      function onIsPlayingChanged() { root.syncPlayingOrder() }
-    }
-  }
+
+
 
   Timer {
     id: trackOsdTimer
@@ -550,10 +550,13 @@ Item {
 
   function statusJson() {
     var p = activePlayer
+    // Read isPlaying directly from the player object to get the freshest value.
+    // p.isPlaying is the Q_PROPERTY from Quickshell's MprisPlayer (backed by playbackState).
+    var playing = p ? (p.isPlaying === true) : false
     return JSON.stringify({
       hasPlayer: p !== null,
-      hasMedia: root.hasMedia,
-      playing: root.isPlaying,
+      hasMedia: p !== null && (p.trackTitle || p.trackArtist || playing),
+      playing: playing,
       identity: p ? (p.identity || "") : "",
       desktopEntry: p ? (p.desktopEntry || "") : "",
       title: root.title,
@@ -565,6 +568,7 @@ Item {
       canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false
     })
   }
+
 
   IpcHandler {
     target: "media"

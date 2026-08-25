@@ -58,9 +58,15 @@ BarWidget {
     return fallback
   }
 
-  readonly property var activePlayer: mediaService && mediaService.activePlayer ? mediaService.activePlayer : findFallbackActivePlayer()
+  // Reading mediaService.activePlayer is a direct QML property access — QML tracks
+  // it as a dependency and re-evaluates when the service's activePlayer changes.
+  // The fallback reads Mpris.players.values directly so isPlaying changes still propagate.
+  readonly property var activePlayer: {
+    if (mediaService && mediaService.activePlayer) return mediaService.activePlayer
+    return findFallbackActivePlayer()
+  }
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
-  readonly property bool isPlaying: mediaService ? mediaService.isPlaying : (activePlayer && activePlayer.isPlaying)
+  readonly property bool isPlaying: (activePlayer && activePlayer.isPlaying) || false
 
   // Smooth fluid energy level (1.0 when playing, 0.18 calm ambient drift when paused)
   readonly property real targetEnergy: isPlaying ? 1.0 : (hasMedia ? 0.18 : 0.08)
