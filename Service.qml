@@ -34,24 +34,28 @@ Item {
     return list
   }
 
-  // Active PipeWire stream players (e.g. Seanime desktop app, dulo.gd / web audio, non-MPRIS streams)
+  // Active PipeWire stream players for apps that lack MPRIS D-Bus (e.g. Seanime desktop app)
   readonly property var streamPlayers: {
     var list = []
     for (var i = 0; i < playbackStreams.length; i++) {
       var s = playbackStreams[i]
       if (!s) continue
       var sLabel = rawStreamLabel(s)
-      var hasActivePlayingMpris = false
+      var pProps = nodeProps(s)
+      var isCorked = pProps["pulse.corked"] === "true" || pProps["pulse.corked"] === true
+      if (isCorked) continue
+
+      var hasMpris = false
       for (var j = 0; j < players.length; j++) {
         var p = players[j]
         if (!p) continue
         var pLabel = playerAppLabel(p)
-        if (MediaModel.areAppsInSameFamily(pLabel, sLabel) && p.isPlaying) {
-          hasActivePlayingMpris = true
+        if (MediaModel.areAppsInSameFamily(pLabel, sLabel)) {
+          hasMpris = true
           break
         }
       }
-      if (!hasActivePlayingMpris) {
+      if (!hasMpris) {
         var vp = MediaModel.createVirtualStreamPlayer(s, root.toplevels)
         if (vp) list.push(vp)
       }
@@ -69,7 +73,7 @@ Item {
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     var cleaned = MediaModel.cleanTitle(t, a)
-    if (!cleaned || activePlayer.isStreamPlayer) {
+    if (!cleaned) {
       var winTitle = MediaModel.findWindowTitleForApp(activePlayer.desktopEntry || activePlayer.identity || activePlayer.appName || "", root.toplevels)
       if (winTitle) {
         var winClean = MediaModel.cleanTitle(winTitle, a)
@@ -272,7 +276,7 @@ Item {
     var playingMprisWithStream = oldestPlayingPlayer(true)
     if (playingMprisWithStream) return playingMprisWithStream
 
-    // 3. Currently playing PipeWire stream (Seanime, dulo.gd, web stream)
+    // 3. Currently playing PipeWire stream (Seanime desktop app)
     for (var s = 0; s < streamPlayers.length; s++) {
       if (streamPlayers[s] && streamPlayers[s].isPlaying) return streamPlayers[s]
     }
@@ -488,9 +492,6 @@ Item {
         player.togglePlaying()
         handled = true
       }
-      if (player && player.isStreamPlayer) {
-        Quickshell.execDetached(["wtype", "-k", "space"])
-      }
     } else if (action === "pause") {
       actionLabel = "Pause"
       iconName = "media-pause"
@@ -503,9 +504,6 @@ Item {
       } else if (player && player.canTogglePlaying && player.isPlaying) {
         player.togglePlaying()
         handled = true
-      }
-      if (player && player.isStreamPlayer) {
-        Quickshell.execDetached(["wtype", "-k", "space"])
       }
     } else if (action === "playPause") {
       actionLabel = player && player.isPlaying ? "Pause" : "Play"
@@ -522,9 +520,6 @@ Item {
       } else if (player && player.canTogglePlaying) {
         player.togglePlaying()
         handled = true
-      }
-      if (player && player.isStreamPlayer) {
-        Quickshell.execDetached(["wtype", "-k", "space"])
       }
     }
 

@@ -79,7 +79,7 @@ function isPlaybackStream(node) {
   if (!node || !node.isStream || isBlacklistedStream(node)) return false
   var p = nodeProps(node)
 
-  // 1. Filter out notification/event/alert/system sound effects
+  // 1. Filter out notification/event/alert/system sound effects (e.g. Discord, system pings)
   var role = String(p["media.role"] || p["node.role"] || "").toLowerCase()
   if (role === "event" || role === "notification" || role === "alert" || role === "test" || role === "sound-effect") {
     return false
@@ -346,17 +346,22 @@ function osdMessage(player, fallback) {
   return label || fallback
 }
 
-function findWindowTitleForApp(appIdentifier, toplevels) {
-  if (!toplevels || toplevels.length === 0 || !appIdentifier) return ""
+function findToplevelForApp(appIdentifier, toplevels) {
+  if (!toplevels || toplevels.length === 0 || !appIdentifier) return null
   for (var i = 0; i < toplevels.length; i++) {
     var t = toplevels[i]
     if (!t) continue
     var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
     if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
-      if (t.title) return t.title
+      return t
     }
   }
-  return ""
+  return null
+}
+
+function findWindowTitleForApp(appIdentifier, toplevels) {
+  var t = findToplevelForApp(appIdentifier, toplevels)
+  return t && t.title ? t.title : ""
 }
 
 // Virtual player wrapper created from an active Pipewire audio stream when no MPRIS player exists
@@ -374,8 +379,9 @@ function createVirtualStreamPlayer(node, toplevels) {
     appName = "Zen Browser"
   }
 
-  // Look up actual window title from Quickshell Wayland Toplevels
-  var winTitle = findWindowTitleForApp(binary || rawApp || appName, toplevels)
+  // Look up actual toplevel window from Quickshell Wayland Toplevels
+  var targetToplevel = findToplevelForApp(binary || rawApp || appName, toplevels)
+  var winTitle = targetToplevel && targetToplevel.title ? targetToplevel.title : ""
   var mediaName = p["media.name"] || node.description || ""
   
   var resolvedTitle = cleanTitle(mediaName, appName)
@@ -387,6 +393,15 @@ function createVirtualStreamPlayer(node, toplevels) {
   }
 
   var isMuted = Boolean(node.audio && node.audio.muted)
+
+  function triggerVideoToggle() {
+    if (targetToplevel && typeof targetToplevel.activate === "function") {
+      targetToplevel.activate()
+    }
+    if (typeof Quickshell !== "undefined" && Quickshell.execDetached) {
+      Quickshell.execDetached(["wtype", "-k", "space"])
+    }
+  }
 
   return {
     isStreamPlayer: true,
@@ -407,12 +422,15 @@ function createVirtualStreamPlayer(node, toplevels) {
     canGoPrevious: false,
     play: function() {
       if (node.audio) node.audio.muted = false
+      triggerVideoToggle()
     },
     pause: function() {
       if (node.audio) node.audio.muted = true
+      triggerVideoToggle()
     },
     togglePlaying: function() {
       if (node.audio) node.audio.muted = !node.audio.muted
+      triggerVideoToggle()
     }
   }
 }
@@ -443,6 +461,7 @@ if (typeof module !== "undefined") {
     sourceIcon: sourceIcon,
     labelFor: labelFor,
     osdMessage: osdMessage,
+    findToplevelForApp: findToplevelForApp,
     findWindowTitleForApp: findWindowTitleForApp,
     createVirtualStreamPlayer: createVirtualStreamPlayer
   }
