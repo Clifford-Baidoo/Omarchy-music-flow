@@ -27,40 +27,18 @@ MPV_MPRIS_CANDIDATES=(
     "/etc/mpv/scripts/mpris.so"
 )
 
-echo -e "${BLUE}==>${NC} Updating ${GREEN}Omarchy Music Flow${NC} [${PLUGIN_ID}]..."
+echo -e "${BLUE}==>${NC} Synchronizing ${GREEN}Omarchy Music Flow${NC} [${PLUGIN_ID}]..."
 
-# 1. Pull latest git commits if running inside a git repository
-if [ -d "${SCRIPT_DIR}/.git" ]; then
-    echo -e "${BLUE}==>${NC} Fetching latest updates from GitHub repository..."
-    cd "${SCRIPT_DIR}"
-    if git pull --rebase 2>/dev/null || git pull 2>/dev/null; then
-        echo -e "${GREEN}✔ Repository updated to latest version.${NC}"
-    else
-        echo -e "${YELLOW}==> Warning: git pull encountered conflicts or offline mode; continuing with local files.${NC}"
-        git rebase --abort >/dev/null 2>&1 || true
-        git merge --abort >/dev/null 2>&1 || true
-    fi
-
-    # A failed/partial pull can leave conflict markers in tracked files. Never
-    # deploy that into a live, running shell as executable QML/JS - refuse and
-    # bail instead of silently shipping broken or half-merged code.
-    if git status --porcelain=v1 --untracked-files=no | grep -qE '^(UU|AA|DD|AU|UA|UD|DU) '; then
-        echo -e "${RED}==> Error:${NC} repository has unresolved merge conflicts after 'git pull'." >&2
-        echo -e "    Resolve them manually in ${SCRIPT_DIR} before re-running update.sh." >&2
-        exit 1
-    fi
-fi
-
-# 2. Ensure target plugin directory exists
+# 1. Ensure target plugin directory exists
 mkdir -p "${TARGET_DIR}"
 
-# 3. Clean legacy plugin folder if it exists
+# 2. Clean legacy plugin folder if it exists
 if [ -d "${LEGACY_DIR}" ]; then
     echo -e "${BLUE}==>${NC} Cleaning legacy plugin directory: ${LEGACY_DIR}"
     rm -rf "${LEGACY_DIR}"
 fi
 
-# 4. Copy updated plugin files
+# 3. Copy updated plugin files
 cp -f "${SCRIPT_DIR}/BarWidget.qml" "${TARGET_DIR}/"
 cp -f "${SCRIPT_DIR}/Service.qml" "${TARGET_DIR}/"
 cp -f "${SCRIPT_DIR}/MediaModel.js" "${TARGET_DIR}/"
@@ -68,7 +46,7 @@ cp -f "${SCRIPT_DIR}/manifest.json" "${TARGET_DIR}/"
 
 echo -e "${BLUE}==>${NC} Plugin files synchronized to: ${TARGET_DIR}"
 
-# 5. Catch manifest/schema problems before they get wired into the bar
+# 4. Catch manifest/schema problems before they get wired into the bar
 if command -v omarchy >/dev/null 2>&1; then
     if ! omarchy plugin validate "${TARGET_DIR}"; then
         echo -e "${RED}==> Error:${NC} updated plugin failed validation, aborting before touching your bar config." >&2
@@ -76,7 +54,7 @@ if command -v omarchy >/dev/null 2>&1; then
     fi
 fi
 
-# 6. Enable MPV MPRIS script if mpv is installed
+# 5. Enable MPV MPRIS script if mpv is installed
 if command -v mpv >/dev/null 2>&1; then
     mkdir -p "${HOME}/.config/mpv/scripts"
     for candidate in "${MPV_MPRIS_CANDIDATES[@]}"; do
@@ -88,7 +66,7 @@ if command -v mpv >/dev/null 2>&1; then
     done
 fi
 
-# 7. Verify and update status bar layout in ~/.config/omarchy/shell.json
+# 6. Verify and update status bar layout in ~/.config/omarchy/shell.json
 echo -e "${BLUE}==>${NC} Verifying status bar configuration in ~/.config/omarchy/shell.json..."
 PLUGIN_ID="${PLUGIN_ID}" STOCK_PLUGIN_ID="${STOCK_PLUGIN_ID}" \
 BAR_SECTION="${BAR_SECTION}" BAR_ANCHOR_ID="${BAR_ANCHOR_ID}" \
@@ -144,7 +122,7 @@ if os.path.isfile(config_path):
         print(f"Note: Could not update shell.json automatically: {e}")
 PYEOF
 
-# 8. Restart Omarchy Shell to apply updates
+# 7. Restart Omarchy Shell to apply updates
 if command -v omarchy >/dev/null 2>&1; then
     echo -e "${BLUE}==>${NC} Reloading Omarchy shell with updated plugin..."
     omarchy restart shell

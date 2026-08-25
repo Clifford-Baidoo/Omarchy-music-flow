@@ -72,23 +72,23 @@ The installer will:
 
 ## 🔄 Updating
 
-### Option 1: Native Omarchy CLI
+### Option 1: Native Omarchy CLI (Recommended)
 
 ```bash
 omarchy plugin update custom.media
 ```
 
-### Option 2: Run Update Script
+### Option 2: Synchronize Local Files
 
 ```bash
 cd omarchy-music-flow
 ./update.sh
 ```
 
-The updater will:
-1. Pull the latest commits from the repository.
-2. Synchronize all plugin files to `~/.config/omarchy/plugins/custom.media/`.
-3. Clean up any deprecated legacy plugin directories.
+The updater script will:
+1. Synchronize all plugin files to `~/.config/omarchy/plugins/custom.media/`.
+2. Clean up any deprecated legacy plugin directories.
+3. Validate plugin schema and verify bar layout.
 4. Reload `omarchy-shell` with the updated features and fixes.
 
 ---

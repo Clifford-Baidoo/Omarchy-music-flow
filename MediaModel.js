@@ -425,6 +425,9 @@ function isAllowedLocalPath(path) {
   if (path.indexOf("..") !== -1) return false
   if (path.charAt(0) !== "/") return false
 
+  // Explicitly disallow SVG files to prevent active XML / resource-referencing decoding
+  if (/\.svg(?:z)?$/i.test(path)) return false
+
   // Disallow sensitive and special OS system paths
   var blockedPrefixes = [
     "/dev/", "/proc/", "/sys/", "/etc/", "/run/", "/var/run/",
@@ -434,21 +437,26 @@ function isAllowedLocalPath(path) {
     if (path.indexOf(blockedPrefixes[i]) === 0) return false
   }
 
-  // Allowed directory roots for local user artwork & media caches
-  var allowedPrefixes = [
-    "/home/", "/tmp/", "/var/tmp/", "/usr/share/", "/media/", "/mnt/"
-  ]
-  var inAllowedPrefix = allowedPrefixes.some(function(p) {
-    return path.indexOf(p) === 0
-  })
-  if (!inAllowedPrefix) return false
+  // Allowed directory roots: strictly dedicated cache, temp, and system icon paths.
+  // Arbitrary user personal paths (/home/.../Pictures, /home/.../Documents, etc.) are blocked.
+  var isCacheOrTemp = (
+    path.indexOf("/tmp/") === 0 ||
+    path.indexOf("/var/tmp/") === 0 ||
+    /\/\.cache\//.test(path)
+  )
+  var isSystemIcon = (
+    path.indexOf("/usr/share/icons/") === 0 ||
+    path.indexOf("/usr/share/pixmaps/") === 0
+  )
 
-  // Allowed image file extensions
-  var allowedExtensions = /\.(png|jpe?g|webp|gif|bmp|svg|ico)$/i
-  if (allowedExtensions.test(path)) return true
+  if (!isCacheOrTemp && !isSystemIcon) return false
 
-  // Allow cache files with alphanumeric filenames in tmp or cache directories
-  if (path.indexOf("/tmp/") === 0 || path.indexOf("/var/tmp/") === 0 || path.indexOf("/.cache/") !== -1) {
+  // Strictly raster image file extensions only (no SVG)
+  var allowedRasterExtensions = /\.(png|jpe?g|webp|gif|bmp|ico)$/i
+  if (allowedRasterExtensions.test(path)) return true
+
+  // Allow cache files with alphanumeric filenames in tmp or cache directories (e.g. Spotify/Chromium cache hashes)
+  if (isCacheOrTemp) {
     var basename = path.split("/").pop()
     if (/^[a-zA-Z0-9_\-\.]+$/.test(basename)) return true
   }
@@ -461,6 +469,9 @@ function isAllowedHttpsUrl(urlString) {
   if (urlString.length > MAX_URL_LENGTH) return false
   if (/[\x00-\x1f\x7f\s]/.test(urlString)) return false
   if (urlString.indexOf("https://") !== 0) return false
+
+  // Disallow SVG URLs to prevent active XML / resource-referencing decoding
+  if (/\.svg(?:z)?(?:[\?#]|$)/i.test(urlString)) return false
 
   // Parse authority
   var withoutScheme = urlString.slice(8)
@@ -498,10 +509,11 @@ function sanitizeArtUrl(rawUrl) {
   // Reject control characters and newlines
   if (/[\x00-\x1f\x7f]/.test(url)) return ""
 
-  // 1. Data URIs with explicit image MIME types and strict bounded byte size
+  // 1. Data URIs: Strictly RASTER image MIME types only (PNG, JPEG, WebP, GIF, BMP).
+  // SVG (svg+xml) is explicitly rejected to prevent active XML / resource-referencing exploits.
   if (url.indexOf("data:image/") === 0) {
     if (url.length > MAX_DATA_IMAGE_LENGTH) return ""
-    if (/^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(url)) {
+    if (/^data:image\/(?:png|jpe?g|webp|gif|bmp);base64,[A-Za-z0-9+/=]+$/i.test(url)) {
       return url
     }
     return ""
