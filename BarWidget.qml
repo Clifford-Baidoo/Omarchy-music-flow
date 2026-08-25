@@ -33,9 +33,9 @@ BarWidget {
     for (var i = 0; i < raw.length; i++) {
       var p = raw[i]
       if (!p || MediaModel.isProxyPlayer(p)) continue
-      var key = MediaModel.playerKey(p)
-      if (!key || seen[key]) continue
-      seen[key] = true
+      var cKey = MediaModel.playerCanonicalKey(p)
+      if (!cKey || seen[cKey]) continue
+      seen[cKey] = true
       if (MediaModel.hasMetadata(p)) list.push(p)
     }
     return list
@@ -104,6 +104,11 @@ BarWidget {
     if (!player) return ""
     if (mediaService && typeof mediaService.playerKey === "function") return mediaService.playerKey(player)
     return MediaModel.playerKey(player)
+  }
+
+  function playerCanonicalKey(player) {
+    if (!player) return ""
+    return MediaModel.playerCanonicalKey(player)
   }
 
   function runAction(action, targetPlayer) {
@@ -567,7 +572,7 @@ BarWidget {
 
             readonly property var player: modelData
             readonly property bool selected: root.activePlayer && player
-              && root.playerKey(root.activePlayer) === root.playerKey(player)
+              && root.playerCanonicalKey(root.activePlayer) === root.playerCanonicalKey(player)
             readonly property string name: root.sourceName(player)
             readonly property string icon: root.sourceIcon(player)
             readonly property string track: {

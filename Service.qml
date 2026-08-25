@@ -124,18 +124,23 @@ Item {
     return MediaModel.playerKey(player)
   }
 
+  function playerCanonicalKey(player) {
+    return MediaModel.playerCanonicalKey(player)
+  }
+
   function playerForKey(key) {
     if (!key) return null
+    var cKey = key.toLowerCase().replace(/[^a-z0-9]/g, "")
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
-      if (playerKey(p) === key) return p
+      if (playerKey(p) === key || playerCanonicalKey(p) === cKey) return p
     }
-    if (seanimePlayer && playerKey(seanimePlayer) === key) return seanimePlayer
+    if (seanimePlayer && (playerKey(seanimePlayer) === key || playerCanonicalKey(seanimePlayer) === cKey)) return seanimePlayer
     return null
   }
 
   function playerOrder(player, fallback) {
-    var key = playerKey(player)
+    var key = playerCanonicalKey(player)
     var value = key ? playerStartedAt[key] : undefined
     return value === undefined ? fallback : value
   }
@@ -148,7 +153,7 @@ Item {
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
-      var key = playerKey(p)
+      var key = playerCanonicalKey(p)
       if (!key) continue
 
       alive[key] = true
@@ -163,7 +168,7 @@ Item {
     }
 
     if (seanimePlayer) {
-      alive[playerKey(seanimePlayer)] = true
+      alive[playerCanonicalKey(seanimePlayer)] = true
     }
 
     if (preferredPlayerKey && !alive[preferredPlayerKey]) preferredPlayerKey = ""
@@ -180,17 +185,17 @@ Item {
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
-      var key = playerKey(p)
-      if (!key || seen[key]) continue
-      seen[key] = true
+      var cKey = playerCanonicalKey(p)
+      if (!cKey || seen[cKey]) continue
+      seen[cKey] = true
       if (hasMetadata(p)) {
         list.push(p)
-        if (key.toLowerCase().indexOf("mpv") !== -1) hasMpvMpris = true
+        if (cKey.indexOf("mpv") !== -1) hasMpvMpris = true
       }
     }
 
     if (seanimePlayer && !hasMpvMpris) {
-      var sKey = playerKey(seanimePlayer)
+      var sKey = playerCanonicalKey(seanimePlayer)
       if (!seen[sKey]) {
         seen[sKey] = true
         list.push(seanimePlayer)
@@ -217,17 +222,17 @@ Item {
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
-      var key = playerKey(p)
-      if (!key || seen[key]) continue
-      seen[key] = true
+      var cKey = playerCanonicalKey(p)
+      if (!cKey || seen[cKey]) continue
+      seen[cKey] = true
       if (canCycleSource(p)) {
         list.push(p)
-        if (key.toLowerCase().indexOf("mpv") !== -1) hasMpvMpris = true
+        if (cKey.indexOf("mpv") !== -1) hasMpvMpris = true
       }
     }
 
     if (seanimePlayer && !hasMpvMpris) {
-      var sKey = playerKey(seanimePlayer)
+      var sKey = playerCanonicalKey(seanimePlayer)
       if (!seen[sKey]) {
         seen[sKey] = true
         list.push(seanimePlayer)
@@ -291,10 +296,10 @@ Item {
   function cycleSource() {
     var list = orderedSourcePlayers()
     if (list.length <= 1) return false
-    var currentKey = activePlayer ? playerKey(activePlayer) : ""
+    var currentKey = activePlayer ? playerCanonicalKey(activePlayer) : ""
     var currentIndex = -1
     for (var i = 0; i < list.length; i++) {
-      if (playerKey(list[i]) === currentKey) {
+      if (playerCanonicalKey(list[i]) === currentKey) {
         currentIndex = i
         break
       }
@@ -359,7 +364,7 @@ Item {
   function selectPlayer(key) {
     var player = playerForKey(key)
     if (!player || !hasMetadata(player)) return false
-    preferredPlayerKey = playerKey(player)
+    preferredPlayerKey = playerCanonicalKey(player)
     if (!player.isPlaying && (player.canPlay || player.canTogglePlaying)) {
       playPlayer(player)
     }
@@ -396,10 +401,10 @@ Item {
     var list = sourceCyclePlayers
     if (!list || list.length === 0) return false
 
-    var activeKey = playerKey(activePlayer)
+    var activeKey = playerCanonicalKey(activePlayer)
     var index = 0
     for (var i = 0; i < list.length; i++) {
-      if (playerKey(list[i]) === activeKey) {
+      if (playerCanonicalKey(list[i]) === activeKey) {
         index = i
         break
       }
@@ -409,8 +414,8 @@ Item {
     var current = activePlayer
     var next = list[index]
     var currentWasPlaying = current && current.isPlaying
-    var currentKey = playerKey(current)
-    var nextKey = playerKey(next)
+    var currentKey = playerCanonicalKey(current)
+    var nextKey = playerCanonicalKey(next)
 
     preferredPlayerKey = nextKey
 
@@ -501,7 +506,7 @@ Item {
       }
     }
 
-    if (handled && key) preferredPlayerKey = key
+    if (handled && key) preferredPlayerKey = playerCanonicalKey(player)
     if (showFeedback !== false)
       scheduleOsd(actionLabel, iconName, player, handled && (action === "next" || action === "previous"), beforeTrackSignature)
     return handled

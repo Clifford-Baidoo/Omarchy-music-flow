@@ -142,7 +142,7 @@ var APP_FAMILY_MAP = {
 function normalizeAppName(name) {
   var s = String(name || "").toLowerCase()
   s = s.replace(/^org\.mpris\.mediaplayer2\./, "")
-  s = s.replace(/\.instance.*$/, "")
+  s = s.replace(/[\._]instance.*$/, "")
   s = s.replace(/[^a-z0-9]/g, "")
   return s
 }
@@ -167,7 +167,7 @@ function playerAppLabel(player) {
   if (!player) return ""
   var dbus = String(player.dbusName || "")
   dbus = dbus.replace(/^org\.mpris\.MediaPlayer2\./, "")
-  dbus = dbus.replace(/\.instance.*$/, "")
+  dbus = dbus.replace(/[\._]instance.*$/, "")
   return player.desktopEntry || player.identity || dbus
 }
 
@@ -199,6 +199,25 @@ function playerHasPlaybackStream(player, playbackStreams) {
 function playerKey(player) {
   if (!player) return ""
   return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
+}
+
+// Canonical unique key that groups instance duplicates (e.g. mpv and mpv.instance-XYZ -> "mpv")
+function playerCanonicalKey(player) {
+  if (!player) return ""
+  var dbus = String(player.dbusName || "").toLowerCase()
+  var desktop = String(player.desktopEntry || "").toLowerCase()
+  var identity = String(player.identity || "").toLowerCase()
+  var appName = String(player.appName || "").toLowerCase()
+
+  var base = dbus.replace(/^org\.mpris\.mediaplayer2\./, "")
+  base = base.replace(/[\._]instance.*$/, "")
+  base = base.replace(/[^a-z0-9]/g, "")
+
+  if (base) return base
+  if (desktop) return desktop.replace(/[^a-z0-9]/g, "")
+  if (identity) return identity.replace(/[^a-z0-9]/g, "")
+  if (appName) return appName.replace(/[^a-z0-9]/g, "")
+  return playerKey(player)
 }
 
 function trackSignature(player) {
@@ -451,6 +470,7 @@ if (typeof module !== "undefined") {
     playerAppLabel: playerAppLabel,
     playerHasPlaybackStream: playerHasPlaybackStream,
     playerKey: playerKey,
+    playerCanonicalKey: playerCanonicalKey,
     trackSignature: trackSignature,
     trackChanged: trackChanged,
     cleanTitle: cleanTitle,
