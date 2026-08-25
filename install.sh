@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 # ==============================================================================
 # Omarchy Music Flow Plugin Installer
@@ -12,8 +12,19 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Single source of truth for every id this script and the config-writer below
+# touch, so the plugin id never has to be duplicated (and drift) across files.
 PLUGIN_ID="custom.media"
+STOCK_PLUGIN_ID="omarchy.media"
+BAR_SECTION="left"
+BAR_ANCHOR_ID="omarchy.workspaces"
 TARGET_DIR="${HOME}/.config/omarchy/plugins/${PLUGIN_ID}"
+
+MPV_MPRIS_CANDIDATES=(
+    "/usr/lib/mpv-mpris/mpris.so"
+    "/etc/mpv/scripts/mpris.so"
+)
 
 echo -e "${BLUE}==>${NC} Installing ${GREEN}Omarchy Music Flow${NC} [${PLUGIN_ID}]..."
 
@@ -28,27 +39,42 @@ cp -f "${SCRIPT_DIR}/manifest.json" "${TARGET_DIR}/"
 
 echo -e "${BLUE}==>${NC} Plugin files installed to: ${TARGET_DIR}"
 
-# 3. Enable MPV MPRIS script if mpv is installed (enables Seanime, MPV, and anime video player support)
-if command -v mpv >/dev/null 2>&1; then
-    mkdir -p "${HOME}/.config/mpv/scripts"
-    if [ -f "/usr/lib/mpv-mpris/mpris.so" ]; then
-        ln -sf "/usr/lib/mpv-mpris/mpris.so" "${HOME}/.config/mpv/scripts/mpris.so"
-        echo -e "${BLUE}==>${NC} Enabled MPV MPRIS integration for video & Seanime playback."
-    elif [ -f "/etc/mpv/scripts/mpris.so" ]; then
-        ln -sf "/etc/mpv/scripts/mpris.so" "${HOME}/.config/mpv/scripts/mpris.so"
-        echo -e "${BLUE}==>${NC} Enabled MPV MPRIS integration for video & Seanime playback."
+# 3. Catch manifest/schema problems before they get wired into the bar
+if command -v omarchy >/dev/null 2>&1; then
+    if ! omarchy plugin validate "${TARGET_DIR}"; then
+        echo -e "${RED}==> Error:${NC} plugin failed validation, aborting before touching your bar config." >&2
+        exit 1
     fi
 fi
 
-# 4. Safely configure Omarchy shell.json layout
+# 4. Enable MPV MPRIS script if mpv is installed (enables Seanime, MPV, and anime video player support)
+if command -v mpv >/dev/null 2>&1; then
+    mkdir -p "${HOME}/.config/mpv/scripts"
+    for candidate in "${MPV_MPRIS_CANDIDATES[@]}"; do
+        if [ -f "${candidate}" ]; then
+            ln -sf "${candidate}" "${HOME}/.config/mpv/scripts/mpris.so"
+            echo -e "${BLUE}==>${NC} Enabled MPV MPRIS integration for video & Seanime playback."
+            break
+        fi
+    done
+fi
+
+# 5. Safely configure Omarchy shell.json layout
 echo -e "${BLUE}==>${NC} Configuring status bar layout in ~/.config/omarchy/shell.json..."
+PLUGIN_ID="${PLUGIN_ID}" STOCK_PLUGIN_ID="${STOCK_PLUGIN_ID}" \
+BAR_SECTION="${BAR_SECTION}" BAR_ANCHOR_ID="${BAR_ANCHOR_ID}" \
 python3 - << 'PYEOF'
 import json, os
 
+plugin_id = os.environ["PLUGIN_ID"]
+stock_plugin_id = os.environ["STOCK_PLUGIN_ID"]
+section = os.environ["BAR_SECTION"]
+anchor_id = os.environ["BAR_ANCHOR_ID"]
+
 config_path = os.path.expanduser("~/.config/omarchy/shell.json")
 default_paths = [
-    os.path.expanduser("~/.config/omarchy/shell.json"),
-    os.path.expanduser(os.environ.get("OMARCHY_PATH", "/usr/share/omarchy") + "/config/omarchy/shell.json"),
+    config_path,
+    os.path.join(os.environ.get("OMARCHY_PATH", "/usr/share/omarchy"), "config/omarchy/shell.json"),
     "/usr/share/omarchy/config/omarchy/shell.json",
 ]
 
@@ -77,7 +103,7 @@ if not config or not isinstance(config, dict):
             "position": "top",
             "transparent": True,
             "layout": {
-                "left": [{"id": "omarchy.menu"}, {"id": "omarchy.workspaces"}],
+                "left": [{"id": "omarchy.menu"}, {"id": anchor_id}],
                 "center": [{"id": "omarchy.clock"}],
                 "right": [{"id": "omarchy.tray"}, {"id": "omarchy.network"}, {"id": "omarchy.audio"}]
             }
@@ -87,43 +113,41 @@ if not config or not isinstance(config, dict):
 bar = config.setdefault("bar", {})
 layout = bar.setdefault("layout", {})
 
-plugin_id = "custom.media"
-
 # 1. Clean any duplicate or old media widgets from all sections
 for sec in ["left", "center", "right"]:
     if sec in layout and isinstance(layout[sec], list):
         layout[sec] = [
-            item for item in layout[sec] 
-            if not (isinstance(item, dict) and (item.get("id") in [plugin_id, "omarchy.media"] or str(item.get("id", "")).endswith(".media")))
+            item for item in layout[sec]
+            if not (isinstance(item, dict) and (item.get("id") in [plugin_id, stock_plugin_id] or str(item.get("id", "")).endswith(".media")))
         ]
 
-# 2. Get the left section AFTER cleaning
-left = layout.setdefault("left", [])
+# 2. Get the target section AFTER cleaning
+target = layout.setdefault(section, [])
 
-# 3. Insert custom.media after omarchy.workspaces (or append if workspaces not in left)
+# 3. Insert plugin_id after the anchor widget (or append if anchor not found)
 inserted = False
-for i, item in enumerate(left):
-    if isinstance(item, dict) and item.get("id") == "omarchy.workspaces":
-        left.insert(i + 1, {"id": plugin_id})
+for i, item in enumerate(target):
+    if isinstance(item, dict) and item.get("id") == anchor_id:
+        target.insert(i + 1, {"id": plugin_id})
         inserted = True
         break
 
 if not inserted:
-    left.append({"id": plugin_id})
+    target.append({"id": plugin_id})
 
-# 4. Disable stock omarchy.media to prevent duplicate service collision
+# 4. Disable the stock media plugin to prevent duplicate service collision
 disabled = config.setdefault("disabledPlugins", [])
-if "omarchy.media" not in disabled:
-    disabled.append("omarchy.media")
+if stock_plugin_id not in disabled:
+    disabled.append(stock_plugin_id)
 
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
 with open(config_path, "w") as f:
     json.dump(config, f, indent=2)
 
-print("Status bar layout updated: custom.media successfully registered in shell.json.")
+print(f"Status bar layout updated: {plugin_id} successfully registered in shell.json.")
 PYEOF
 
-# 5. Restart Omarchy Shell
+# 6. Restart Omarchy Shell
 if command -v omarchy >/dev/null 2>&1; then
     echo -e "${BLUE}==>${NC} Reloading Omarchy shell..."
     omarchy restart shell
