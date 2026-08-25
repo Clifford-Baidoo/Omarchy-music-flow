@@ -281,7 +281,7 @@ function cleanArtist(rawArtist, rawTitle, player) {
     }
   }
 
-  // Fallback to app source name
+  // Fallback to detected platform / app name
   var src = sourceName(player)
   if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
 
@@ -307,42 +307,80 @@ function extractArtUrl(player) {
   return ""
 }
 
-function sourceName(player) {
-  if (!player) return "Media"
+// Identifies the exact playing website / streaming service or native desktop app
+function detectPlatform(player) {
+  if (!player) return { name: "Media", icon: "󰝚" }
+
+  var meta = player.metadata || {}
+  var url = String(meta["xesam:url"] || player.url || "").toLowerCase()
+  var rawTitle = String(player.trackTitle || meta["xesam:title"] || "").toLowerCase()
+  var artUrl = String(player.trackArtUrl || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
   var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
-  if (id.indexOf("spotify") !== -1) return "Spotify"
-  if (id.indexOf("seanime") !== -1) return "Seanime"
-  if (id.indexOf("mpv") !== -1) return "MPV"
-  if (id.indexOf("vlc") !== -1) return "VLC"
-  if (id.indexOf("zen") !== -1) return "Zen Browser"
-  if (id.indexOf("firefox") !== -1) return "Firefox"
-  if (id.indexOf("brave") !== -1) return "Brave"
-  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return "Chrome"
-  if (id.indexOf("edge") !== -1) return "Edge"
-  if (id.indexOf("cliamp") !== -1) return "cliamp"
-  if (id.indexOf("stremio") !== -1) return "Stremio"
-  if (id.indexOf("celluloid") !== -1) return "Celluloid"
-  if (id.indexOf("twitch") !== -1) return "Twitch"
-  if (id.indexOf("soundcloud") !== -1) return "SoundCloud"
-  if (player.identity && player.identity !== "undefined") return player.identity
-  if (player.desktopEntry && player.desktopEntry !== "undefined") return player.desktopEntry
-  return "Player"
+
+  // 1. YouTube
+  if (url.indexOf("youtube.com") !== -1 || url.indexOf("youtu.be") !== -1 || artUrl.indexOf("ytimg.com") !== -1 || rawTitle.indexOf("youtube") !== -1) {
+    return { name: "YouTube", icon: "󰗃" }
+  }
+
+  // 2. Spotify
+  if (id.indexOf("spotify") !== -1 || url.indexOf("spotify.com") !== -1) {
+    return { name: "Spotify", icon: "󰓇" }
+  }
+
+  // 3. Twitch
+  if (url.indexOf("twitch.tv") !== -1 || rawTitle.indexOf("twitch") !== -1) {
+    return { name: "Twitch", icon: "󰕧" }
+  }
+
+  // 4. SoundCloud
+  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) {
+    return { name: "SoundCloud", icon: "󰝚" }
+  }
+
+  // 5. Seanime / Anime
+  if (id.indexOf("seanime") !== -1 || id.indexOf("denshi") !== -1) {
+    return { name: "Seanime", icon: "󰚩" }
+  }
+
+  // 6. Crunchyroll
+  if (url.indexOf("crunchyroll.com") !== -1 || rawTitle.indexOf("crunchyroll") !== -1) {
+    return { name: "Crunchyroll", icon: "󰚩" }
+  }
+
+  // 7. Netflix
+  if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) {
+    return { name: "Netflix", icon: "󰝆" }
+  }
+
+  // 8. Bandcamp
+  if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) {
+    return { name: "Bandcamp", icon: "󰝚" }
+  }
+
+  // 9. Dedicated media players
+  if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
+  if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
+  if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
+  if (id.indexOf("stremio") !== -1) return { name: "Stremio", icon: "󰐹" }
+  if (id.indexOf("celluloid") !== -1) return { name: "Celluloid", icon: "󰐹" }
+
+  // 10. Fallbacks to browser app names
+  if (id.indexOf("zen") !== -1) return { name: "Zen Browser", icon: "󰈹" }
+  if (id.indexOf("firefox") !== -1) return { name: "Firefox", icon: "󰈹" }
+  if (id.indexOf("brave") !== -1) return { name: "Brave", icon: "󰊯" }
+  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return { name: "Chrome", icon: "󰊯" }
+  if (id.indexOf("edge") !== -1) return { name: "Edge", icon: "󰊯" }
+
+  var fallbackName = player.identity || player.desktopEntry || "Media"
+  return { name: fallbackName, icon: "󰝚" }
+}
+
+function sourceName(player) {
+  return detectPlatform(player).name
 }
 
 function sourceIcon(player) {
-  if (!player) return "󰝚"
-  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
-  if (id.indexOf("spotify") !== -1) return "󰓇"
-  if (id.indexOf("seanime") !== -1) return "󰚩"
-  if (id.indexOf("mpv") !== -1) return "󰐹"
-  if (id.indexOf("vlc") !== -1) return "󰕼"
-  if (id.indexOf("zen") !== -1 || id.indexOf("firefox") !== -1) return "󰈹"
-  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1 || id.indexOf("brave") !== -1 || id.indexOf("edge") !== -1) return "󰊯"
-  if (id.indexOf("cliamp") !== -1) return "󰎆"
-  if (id.indexOf("stremio") !== -1 || id.indexOf("celluloid") !== -1) return "󰐹"
-  if (id.indexOf("twitch") !== -1) return "󰕧"
-  if (id.indexOf("soundcloud") !== -1) return "󰝚"
-  return "󰝚"
+  return detectPlatform(player).icon
 }
 
 function labelFor(player) {
@@ -370,7 +408,6 @@ function findWindowTitleForApp(appIdentifier, toplevels) {
   return ""
 }
 
-// Dedicated helper to resolve Seanime stream player when active
 function createSeanimeStreamPlayer(node, toplevels) {
   if (!node || isBlacklistedStream(node)) return null
   var winTitle = findWindowTitleForApp("seanime", toplevels)
@@ -419,6 +456,7 @@ if (typeof module !== "undefined") {
     cleanTitle: cleanTitle,
     cleanArtist: cleanArtist,
     extractArtUrl: extractArtUrl,
+    detectPlatform: detectPlatform,
     sourceName: sourceName,
     sourceIcon: sourceIcon,
     labelFor: labelFor,
