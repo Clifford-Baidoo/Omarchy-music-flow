@@ -11,6 +11,7 @@ BarWidget {
 
   property var service: null
   property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
+  property bool showText: true           // Toggle track title / artist text in bar capsule
 
   readonly property var mediaService: {
     if (service) return service
@@ -163,12 +164,14 @@ BarWidget {
     NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
   }
 
-  // Bar Pill Capsule - Multi-Flow Audio Visualizer
+  // Bar Pill Capsule - Dynamic Reactive Flow Audio Visualizer
   BorderSurface {
     id: pill
     anchors.centerIn: parent
     height: Math.min(parent.height - Style.space(6), Style.space(28))
-    width: root.isMinimized ? height : (flowRow.implicitWidth + Style.space(16))
+    width: root.isMinimized
+      ? height
+      : (root.showText ? (flowRow.implicitWidth + Style.space(16)) : Style.space(110))
     radius: height / 2
     clip: true
     color: clickArea.containsMouse ? Style.tint(root.bar ? root.bar.barForeground : Color.foreground, 0.05) : "transparent"
@@ -181,7 +184,7 @@ BarWidget {
       ColorAnimation { duration: 180 }
     }
 
-    // Dynamic Multi-Mode Audio Visualizer Canvas
+    // Dynamic Multi-Mode Audio Visualizer Canvas with Reactive Intensity Flow
     Canvas {
       id: waveCanvas
       anchors.fill: parent
@@ -209,11 +212,16 @@ BarWidget {
         var isPlayingNow = root.isPlaying
         var mode = root.visualizerMode
 
-        if (mode === "wave") {
-          // 1. DUAL HARMONIC SINE WAVE
-          var amp = isPlayingNow ? height * 0.32 : 0
+        // Multi-frequency rhythm & beat intensity physics
+        var bassPulse = isPlayingNow ? Math.pow(Math.abs(Math.sin(phase * 2.5)), 3) : 0
+        var melodySwell = isPlayingNow ? (0.5 + 0.5 * Math.sin(phase * 0.35)) : 0
+        var intensity = 0.35 + bassPulse * 0.45 + melodySwell * 0.2
 
-          ctx.lineWidth = 1.5
+        if (mode === "wave") {
+          // 1. DUAL HARMONIC REACTIVE OCEAN WAVE
+          var amp = isPlayingNow ? (height * (0.24 + intensity * 0.22)) : 0
+
+          ctx.lineWidth = 1.4 + bassPulse * 0.8
           ctx.strokeStyle = Color.accent
           ctx.beginPath()
           for (var x = 0; x <= width; x += 3) {
@@ -237,45 +245,48 @@ BarWidget {
             ctx.stroke()
           }
         } else if (mode === "bars") {
-          // 2. SPECTRUM EQUALIZER BARS
-          var numBars = 16
+          // 2. ADAPTIVE FREQUENCY EQUALIZER BARS
+          var numBars = root.showText ? 16 : 22
           var barW = (width / numBars) * 0.45
           var gap = (width / numBars) * 0.55
           ctx.fillStyle = Color.accent
           for (var b = 0; b < numBars; b++) {
-            var bh = isPlayingNow ? Math.abs(Math.sin(phase * 2.0 + b * 0.75) * Math.cos(phase * 1.2 + b * 0.35)) * (height * 0.65) + 3 : 2
+            var barFreq = Math.abs(Math.sin(phase * 2.0 + b * 0.75) * Math.cos(phase * 1.2 + b * 0.35))
+            var bh = isPlayingNow ? (barFreq * (height * (0.35 + intensity * 0.45)) + 3) : 2
             var bx = b * (barW + gap) + gap / 2
             var by = midY - bh / 2
             ctx.fillRect(bx, by, barW, bh)
           }
         } else if (mode === "dots") {
-          // 3. DANCING WAVE MATRIX DOTS
-          var numDots = 14
+          // 3. PULSING WAVE MATRIX BEADS
+          var numDots = root.showText ? 14 : 18
           var step = width / (numDots + 1)
           ctx.fillStyle = Color.accent
           for (var d = 1; d <= numDots; d++) {
             var dx = d * step
-            var dy = midY + (isPlayingNow ? Math.sin(phase * 2.2 + d * 0.6) * (height * 0.28) : 0)
-            var r = isPlayingNow ? (2.2 + Math.cos(phase * 1.5 + d * 0.5) * 0.8) : 1.5
+            var dotOsc = Math.sin(phase * 2.2 + d * 0.6)
+            var dy = midY + (isPlayingNow ? dotOsc * (height * (0.2 + intensity * 0.2)) : 0)
+            var r = isPlayingNow ? (2.0 + (bassPulse * 1.2) + Math.cos(phase * 1.5 + d * 0.5) * 0.6) : 1.5
             ctx.beginPath()
             ctx.arc(dx, dy, r, 0, Math.PI * 2)
             ctx.fill()
           }
         } else if (mode === "particles") {
           // 4. FLOWING SOUND DUST / SPARKS
-          var numParts = 12
+          var numParts = root.showText ? 12 : 16
           for (var pIdx = 0; pIdx < numParts; pIdx++) {
-            var px = ((pIdx * 28 + (phase / (Math.PI * 2)) * width) % width)
-            var py = midY + (isPlayingNow ? Math.sin(px * 0.08 + phase + pIdx) * (height * 0.32) : 0)
+            var speed = 28 + bassPulse * 14
+            var px = ((pIdx * speed + (phase / (Math.PI * 2)) * width) % width)
+            var py = midY + (isPlayingNow ? Math.sin(px * 0.08 + phase + pIdx) * (height * (0.22 + intensity * 0.18)) : 0)
             ctx.fillStyle = (pIdx % 2 === 0) ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground)
             ctx.beginPath()
-            ctx.arc(px, py, 2.0, 0, Math.PI * 2)
+            ctx.arc(px, py, 1.8 + bassPulse * 0.8, 0, Math.PI * 2)
             ctx.fill()
           }
         } else if (mode === "pulse") {
-          // 5. BREATHING AUDIO AURA
+          // 5. RHYTHMIC BREATHING AUDIO HEARTBEAT
           if (isPlayingNow) {
-            var pulseScale = 0.5 + Math.sin(phase * 2) * 0.4
+            var pulseScale = 0.4 + intensity * 0.6
             var grad = ctx.createRadialGradient(width / 2, midY, 2, width / 2, midY, (width / 2) * pulseScale)
             grad.addColorStop(0, Color.accent)
             grad.addColorStop(1, "transparent")
@@ -302,12 +313,28 @@ BarWidget {
       }
     }
 
-    // Expanded Mode - Pure Flow (Music icon + Scrolling song name)
+    // Pure Minimalist Visualizer Mode (Source Glyph centered over flow)
+    Item {
+      anchors.fill: parent
+      visible: !root.isMinimized && !root.showText
+
+      Text {
+        anchors.centerIn: parent
+        text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
+        color: root.isPlaying ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4))
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        font.bold: true
+        Behavior on color { ColorAnimation { duration: 140 } }
+      }
+    }
+
+    // Full Expanded Mode (Music icon + Scrolling song name over flow)
     Row {
       id: flowRow
       anchors.centerIn: parent
       spacing: Style.space(7)
-      visible: !root.isMinimized
+      visible: !root.isMinimized && root.showText
 
       // Music Icon / Source Glyph
       Text {
@@ -385,7 +412,7 @@ BarWidget {
 
           SequentialAnimation on x {
             id: scrollAnim
-            running: titleRow.needsScroll && !root.popupOpen && (!root.bar || !root.bar.vertical) && root.hasMedia && !root.isMinimized
+            running: titleRow.needsScroll && !root.popupOpen && (!root.bar || !root.bar.vertical) && root.hasMedia && !root.isMinimized && root.showText
             loops: Animation.Infinite
 
             PauseAnimation { duration: 2500 }
@@ -417,6 +444,8 @@ BarWidget {
     onClicked: function(mouse) {
       if (mouse.button === Qt.MiddleButton) {
         root.runAction("playPause", root.activePlayer)
+      } else if (mouse.button === Qt.RightButton) {
+        root.showText = !root.showText
       } else {
         root.popupOpen = !root.popupOpen
       }
@@ -429,7 +458,7 @@ BarWidget {
         root.runAction("next", root.activePlayer)
       }
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? (root.title + (root.artist ? " — " + root.artist : "")) : "Music Player")
+    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? (root.title + (root.artist ? " — " + root.artist : "")) : "Music Player (Right-click: Toggle Text)")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
@@ -573,32 +602,85 @@ BarWidget {
         }
       }
 
-      // Visualizer Flow Switcher Row
-      Row {
-        anchors.horizontalCenter: parent.horizontalCenter
+      // Visualizer Flow & Text Visibility Switcher
+      Column {
+        width: parent.width
         spacing: Style.space(6)
 
-        Repeater {
-          model: [
-            { id: "wave", name: "Wave", icon: "󰎆" },
-            { id: "bars", name: "Bars", icon: "󰝛" },
-            { id: "dots", name: "Dots", icon: "󰄰" },
-            { id: "particles", name: "Sparks", icon: "󰠱" },
-            { id: "pulse", name: "Pulse", icon: "󰓎" }
-          ]
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
 
+          Row {
+            spacing: Style.space(4)
+            Repeater {
+              model: [
+                { id: "wave", name: "Wave", icon: "󰎆" },
+                { id: "bars", name: "Bars", icon: "󰝛" },
+                { id: "dots", name: "Dots", icon: "󰄰" },
+                { id: "particles", name: "Sparks", icon: "󰠱" },
+                { id: "pulse", name: "Pulse", icon: "󰓎" }
+              ]
+
+              BorderSurface {
+                id: flowBtn
+                required property var modelData
+                readonly property bool isSelected: root.visualizerMode === modelData.id
+
+                width: Style.space(48)
+                height: Style.space(24)
+                radius: Style.spacing.labelGap
+                color: isSelected
+                  ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+                  : (flowMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
+                borderSpec: isSelected
+                  ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+                  : Border.none()
+
+                Row {
+                  anchors.centerIn: parent
+                  spacing: Style.space(2)
+                  Text {
+                    text: flowBtn.modelData.icon
+                    color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  Text {
+                    text: flowBtn.modelData.name
+                    color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.caption
+                    font.bold: flowBtn.isSelected
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+
+                MouseArea {
+                  id: flowMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.visualizerMode = flowBtn.modelData.id
+                    waveCanvas.requestPaint()
+                  }
+                }
+              }
+            }
+          }
+
+          // Text / Pure Flow Toggle Pill
           BorderSurface {
-            id: flowBtn
-            required property var modelData
-            readonly property bool isSelected: root.visualizerMode === modelData.id
-
-            width: Style.space(56)
-            height: Style.space(26)
+            id: textToggleBtn
+            width: Style.space(80)
+            height: Style.space(24)
             radius: Style.spacing.labelGap
-            color: isSelected
+            color: root.showText
               ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
-              : (flowMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
-            borderSpec: isSelected
+              : (textToggleMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
+            borderSpec: root.showText
               ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
               : Border.none()
 
@@ -606,31 +688,28 @@ BarWidget {
               anchors.centerIn: parent
               spacing: Style.space(3)
               Text {
-                text: flowBtn.modelData.icon
-                color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                text: root.showText ? "󰈈" : "󰈉"
+                color: root.showText ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
                 anchors.verticalCenter: parent.verticalCenter
               }
               Text {
-                text: flowBtn.modelData.name
-                color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                text: root.showText ? "Words ON" : "Pure Flow"
+                color: root.showText ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
                 font.pixelSize: Style.font.caption
-                font.bold: flowBtn.isSelected
+                font.bold: root.showText
                 anchors.verticalCenter: parent.verticalCenter
               }
             }
 
             MouseArea {
-              id: flowMouse
+              id: textToggleMouse
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: {
-                root.visualizerMode = flowBtn.modelData.id
-                waveCanvas.requestPaint()
-              }
+              onClicked: root.showText = !root.showText
             }
           }
         }
