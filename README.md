@@ -8,12 +8,16 @@ Featuring a smooth, borderless **dual-harmonic sound wave visualizer** on your s
 
 ## 📸 Screenshots
 
+### 🎛️ Live Setup & Multi-Flow Mode Switcher
+*Full desktop showcase: Bar visualizer in Pure Flow mode alongside the floating player panel, 6-mode visualizer switcher, and YouTube source detection.*
+![Omarchy Music Flow Live Setup](assets/update.png)
+
 ### 🎵 Status Bar Soundwave Flow
 *Seamless, borderless audio wave flow with marquee song title and artist on the top bar.*
 ![Omarchy Music Flow Bar](assets/bar-flow.png)
 
 ### 🎛️ Floating Player & Multi-Source Selector Panel
-*Dedicated floating media window with album artwork, playback deck, and one-click source switching (Spotify, Zen / Firefox / Chrome, Seanime, MPV, cliamp, etc.).*
+*Dedicated floating media window with album artwork, playback deck, and one-click source switching (Spotify, Zen / Firefox / Chrome, MPV, etc.).*
 ![Omarchy Music Player Panel](assets/player-panel.png)
 
 ---
