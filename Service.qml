@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
+import Quickshell.Wayland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -16,6 +17,13 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
+  readonly property var toplevels: {
+    try {
+      return ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
+    } catch (e) {
+      return []
+    }
+  }
 
   readonly property var playbackStreams: {
     var list = []
@@ -26,10 +34,23 @@ Item {
     return list
   }
 
+  // Active Seanime stream player (when running in Electron web player)
+  readonly property var seanimePlayer: {
+    for (var i = 0; i < playbackStreams.length; i++) {
+      var s = playbackStreams[i]
+      if (!s) continue
+      var sLabel = rawStreamLabel(s)
+      if (sLabel.toLowerCase().indexOf("seanime") !== -1 || (nodeProps(s)["application.process.binary"] || "").toLowerCase().indexOf("seanime") !== -1) {
+        return MediaModel.createSeanimeStreamPlayer(s, root.toplevels)
+      }
+    }
+    return null
+  }
+
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying))
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying) || Boolean(activePlayer.isStreamPlayer))
   
   readonly property string title: {
     if (!activePlayer) return ""
@@ -48,7 +69,7 @@ Item {
   }
 
   readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
-  readonly property string artUrl: activePlayer && activePlayer.trackArtUrl ? activePlayer.trackArtUrl : ""
+  readonly property string artUrl: activePlayer ? MediaModel.extractArtUrl(activePlayer) : ""
   readonly property string identity: activePlayer ? (activePlayer.identity || activePlayer.desktopEntry || "") : ""
 
   function isProxyPlayer(player) {
@@ -109,6 +130,7 @@ Item {
       var p = players[i]
       if (playerKey(p) === key) return p
     }
+    if (seanimePlayer && playerKey(seanimePlayer) === key) return seanimePlayer
     return null
   }
 
@@ -139,6 +161,10 @@ Item {
       }
     }
 
+    if (seanimePlayer) {
+      alive[playerKey(seanimePlayer)] = true
+    }
+
     if (preferredPlayerKey && !alive[preferredPlayerKey]) preferredPlayerKey = ""
 
     playSerial = serial
@@ -151,6 +177,7 @@ Item {
       var p = players[i]
       if (hasMetadata(p)) list.push(p)
     }
+    if (seanimePlayer) list.push(seanimePlayer)
 
     list.sort(function(a, b) {
       if (!!a.isPlaying !== !!b.isPlaying) return a.isPlaying ? -1 : 1
@@ -171,6 +198,7 @@ Item {
       var p = players[i]
       if (canCycleSource(p)) list.push(p)
     }
+    if (seanimePlayer) list.push(seanimePlayer)
 
     list.sort(function(a, b) {
       if (isProxyPlayer(a) !== isProxyPlayer(b)) return isProxyPlayer(a) ? 1 : -1
@@ -225,7 +253,10 @@ Item {
     var playingMpris = oldestPlayingPlayer(false)
     if (playingMpris) return playingMpris
 
-    // 4. Fallbacks (first available player with metadata)
+    // 4. Currently playing Seanime stream
+    if (seanimePlayer) return seanimePlayer
+
+    // 5. Fallbacks (first available player with metadata)
     if (players.length > 0) {
       for (var i = 0; i < players.length; i++) {
         if (hasMetadata(players[i])) return players[i]
@@ -486,7 +517,7 @@ Item {
       title: root.title,
       artist: root.artist,
       album: p && p.trackAlbum ? p.trackAlbum : "",
-      artUrl: p && p.trackArtUrl ? p.trackArtUrl : "",
+      artUrl: root.artUrl,
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,
       canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false

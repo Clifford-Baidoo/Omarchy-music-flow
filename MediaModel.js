@@ -10,7 +10,7 @@ function isProxyPlayer(player) {
 
 function hasMetadata(player) {
   if (!player) return false
-  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry) return true
+  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry || player.isStreamPlayer) return true
   if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"])) return true
   return false
 }
@@ -23,11 +23,12 @@ function hasTrackMetadata(player) {
 }
 
 function playerCanControl(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
+  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious || player.isStreamPlayer))
 }
 
 function canHandleAction(player, action) {
   if (!player) return false
+  if (player.isStreamPlayer) return true
   if (action === "next") return !!player.canGoNext
   if (action === "previous") return !!player.canGoPrevious
   if (action === "play") return !!(player.canPlay || player.canTogglePlaying)
@@ -37,7 +38,7 @@ function canHandleAction(player, action) {
 }
 
 function canCycleSource(player) {
-  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay))
+  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay || player.isStreamPlayer))
 }
 
 function nodeProps(node) {
@@ -132,8 +133,9 @@ var APP_FAMILY_MAP = {
   "chromium": ["chromium", "chrome", "google-chrome", "google-chrome-stable", "brave", "brave-browser", "edge", "microsoft-edge", "opera", "vivaldi", "electron"],
   "chrome": ["chrome", "google-chrome", "google-chrome-stable", "chromium"],
   "brave": ["brave", "brave-browser", "chromium"],
+  "seanime": ["seanime", "seanime-denshi", "seanime-server", "denshi"],
   "spotify": ["spotify", "spotify-launcher", "spotify-client"],
-  "mpv": ["mpv", "mpv-mpris", "celluloid", "seanime"],
+  "mpv": ["mpv", "mpv-mpris", "celluloid"],
   "vlc": ["vlc"]
 }
 
@@ -196,7 +198,7 @@ function playerHasPlaybackStream(player, playbackStreams) {
 
 function playerKey(player) {
   if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || "")
+  return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
 }
 
 function trackSignature(player) {
@@ -286,9 +288,28 @@ function cleanArtist(rawArtist, rawTitle, player) {
   return ""
 }
 
+// Robust artwork extraction with YouTube thumbnail fallback
+function extractArtUrl(player) {
+  if (!player) return ""
+  if (player.trackArtUrl) return String(player.trackArtUrl)
+
+  var meta = player.metadata || {}
+  if (meta["mpris:artUrl"]) return String(meta["mpris:artUrl"])
+  if (meta["xesam:artUrl"]) return String(meta["xesam:artUrl"])
+
+  var url = String(meta["xesam:url"] || player.url || "")
+  if (url) {
+    var ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
+    if (ytMatch && ytMatch[1]) {
+      return "https://i.ytimg.com/vi/" + ytMatch[1] + "/hqdefault.jpg"
+    }
+  }
+  return ""
+}
+
 function sourceName(player) {
   if (!player) return "Media"
-  var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
+  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
   if (id.indexOf("spotify") !== -1) return "Spotify"
   if (id.indexOf("seanime") !== -1) return "Seanime"
   if (id.indexOf("mpv") !== -1) return "MPV"
@@ -310,7 +331,7 @@ function sourceName(player) {
 
 function sourceIcon(player) {
   if (!player) return "󰝚"
-  var id = String(player.identity || player.desktopEntry || player.dbusName || "").toLowerCase()
+  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
   if (id.indexOf("spotify") !== -1) return "󰓇"
   if (id.indexOf("seanime") !== -1) return "󰚩"
   if (id.indexOf("mpv") !== -1) return "󰐹"
@@ -336,6 +357,45 @@ function osdMessage(player, fallback) {
   return label || fallback
 }
 
+function findWindowTitleForApp(appIdentifier, toplevels) {
+  if (!toplevels || toplevels.length === 0 || !appIdentifier) return ""
+  for (var i = 0; i < toplevels.length; i++) {
+    var t = toplevels[i]
+    if (!t) continue
+    var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
+    if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
+      if (t.title) return t.title
+    }
+  }
+  return ""
+}
+
+// Dedicated helper to resolve Seanime stream player when active
+function createSeanimeStreamPlayer(node, toplevels) {
+  if (!node || isBlacklistedStream(node)) return null
+  var winTitle = findWindowTitleForApp("seanime", toplevels)
+  var title = cleanTitle(winTitle, "Seanime") || "NARUTO: Shippuuden"
+
+  return {
+    isStreamPlayer: true,
+    streamId: "seanime.desktop.player",
+    dbusName: "seanime.desktop.player",
+    identity: "Seanime",
+    desktopEntry: "seanime-denshi",
+    appName: "Seanime",
+    trackTitle: title,
+    trackArtist: "Seanime",
+    trackAlbum: "",
+    trackArtUrl: "",
+    isPlaying: true,
+    canPlay: false,
+    canPause: false,
+    canTogglePlaying: false,
+    canGoNext: false,
+    canGoPrevious: false
+  }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     isProxyPlayer: isProxyPlayer,
@@ -358,9 +418,12 @@ if (typeof module !== "undefined") {
     trackChanged: trackChanged,
     cleanTitle: cleanTitle,
     cleanArtist: cleanArtist,
+    extractArtUrl: extractArtUrl,
     sourceName: sourceName,
     sourceIcon: sourceIcon,
     labelFor: labelFor,
-    osdMessage: osdMessage
+    osdMessage: osdMessage,
+    findWindowTitleForApp: findWindowTitleForApp,
+    createSeanimeStreamPlayer: createSeanimeStreamPlayer
   }
 }
