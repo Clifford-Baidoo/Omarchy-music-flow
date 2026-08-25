@@ -10,6 +10,8 @@ BarWidget {
   moduleName: "nek0.media"
 
   property var service: null
+  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
+
   readonly property var mediaService: {
     if (service) return service
     if (!root.bar || !root.bar.shell) return null
@@ -161,7 +163,7 @@ BarWidget {
     NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
   }
 
-  // Bar Pill Capsule - Pure Visualizer Flow
+  // Bar Pill Capsule - Multi-Flow Audio Visualizer
   BorderSurface {
     id: pill
     anchors.centerIn: parent
@@ -179,7 +181,7 @@ BarWidget {
       ColorAnimation { duration: 180 }
     }
 
-    // Horizontal audio wave flow spanning across the capsule
+    // Dynamic Multi-Mode Audio Visualizer Canvas
     Canvas {
       id: waveCanvas
       anchors.fill: parent
@@ -205,32 +207,81 @@ BarWidget {
 
         var midY = height / 2
         var isPlayingNow = root.isPlaying
-        var amp = isPlayingNow ? height * 0.32 : 0
+        var mode = root.visualizerMode
 
-        // Primary flowing wave
-        ctx.lineWidth = 1.5
-        ctx.strokeStyle = Color.accent
-        ctx.beginPath()
-        for (var x = 0; x <= width; x += 3) {
-          var k = (x / width) * Math.PI * 4
-          var y = midY + (isPlayingNow ? Math.sin(k + phase) * Math.cos(k * 0.5 + phase * 0.8) * amp : 0)
-          if (x === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        }
-        ctx.stroke()
+        if (mode === "wave") {
+          // 1. DUAL HARMONIC SINE WAVE
+          var amp = isPlayingNow ? height * 0.32 : 0
 
-        // Secondary harmonic flowing wave
-        if (isPlayingNow) {
-          ctx.lineWidth = 1.0
-          ctx.strokeStyle = root.bar ? root.bar.barForeground : Color.foreground
+          ctx.lineWidth = 1.5
+          ctx.strokeStyle = Color.accent
           ctx.beginPath()
-          for (var x2 = 0; x2 <= width; x2 += 3) {
-            var k2 = (x2 / width) * Math.PI * 3
-            var y2 = midY + Math.sin(k2 - phase * 1.3) * (amp * 0.65)
-            if (x2 === 0) ctx.moveTo(x2, y2)
-            else ctx.lineTo(x2, y2)
+          for (var x = 0; x <= width; x += 3) {
+            var k = (x / width) * Math.PI * 4
+            var y = midY + (isPlayingNow ? Math.sin(k + phase) * Math.cos(k * 0.5 + phase * 0.8) * amp : 0)
+            if (x === 0) ctx.moveTo(x, y)
+            else ctx.lineTo(x, y)
           }
           ctx.stroke()
+
+          if (isPlayingNow) {
+            ctx.lineWidth = 1.0
+            ctx.strokeStyle = root.bar ? root.bar.barForeground : Color.foreground
+            ctx.beginPath()
+            for (var x2 = 0; x2 <= width; x2 += 3) {
+              var k2 = (x2 / width) * Math.PI * 3
+              var y2 = midY + Math.sin(k2 - phase * 1.3) * (amp * 0.65)
+              if (x2 === 0) ctx.moveTo(x2, y2)
+              else ctx.lineTo(x2, y2)
+            }
+            ctx.stroke()
+          }
+        } else if (mode === "bars") {
+          // 2. SPECTRUM EQUALIZER BARS
+          var numBars = 16
+          var barW = (width / numBars) * 0.45
+          var gap = (width / numBars) * 0.55
+          ctx.fillStyle = Color.accent
+          for (var b = 0; b < numBars; b++) {
+            var bh = isPlayingNow ? Math.abs(Math.sin(phase * 2.0 + b * 0.75) * Math.cos(phase * 1.2 + b * 0.35)) * (height * 0.65) + 3 : 2
+            var bx = b * (barW + gap) + gap / 2
+            var by = midY - bh / 2
+            ctx.fillRect(bx, by, barW, bh)
+          }
+        } else if (mode === "dots") {
+          // 3. DANCING WAVE MATRIX DOTS
+          var numDots = 14
+          var step = width / (numDots + 1)
+          ctx.fillStyle = Color.accent
+          for (var d = 1; d <= numDots; d++) {
+            var dx = d * step
+            var dy = midY + (isPlayingNow ? Math.sin(phase * 2.2 + d * 0.6) * (height * 0.28) : 0)
+            var r = isPlayingNow ? (2.2 + Math.cos(phase * 1.5 + d * 0.5) * 0.8) : 1.5
+            ctx.beginPath()
+            ctx.arc(dx, dy, r, 0, Math.PI * 2)
+            ctx.fill()
+          }
+        } else if (mode === "particles") {
+          // 4. FLOWING SOUND DUST / SPARKS
+          var numParts = 12
+          for (var pIdx = 0; pIdx < numParts; pIdx++) {
+            var px = ((pIdx * 28 + (phase / (Math.PI * 2)) * width) % width)
+            var py = midY + (isPlayingNow ? Math.sin(px * 0.08 + phase + pIdx) * (height * 0.32) : 0)
+            ctx.fillStyle = (pIdx % 2 === 0) ? Color.accent : (root.bar ? root.bar.barForeground : Color.foreground)
+            ctx.beginPath()
+            ctx.arc(px, py, 2.0, 0, Math.PI * 2)
+            ctx.fill()
+          }
+        } else if (mode === "pulse") {
+          // 5. BREATHING AUDIO AURA
+          if (isPlayingNow) {
+            var pulseScale = 0.5 + Math.sin(phase * 2) * 0.4
+            var grad = ctx.createRadialGradient(width / 2, midY, 2, width / 2, midY, (width / 2) * pulseScale)
+            grad.addColorStop(0, Color.accent)
+            grad.addColorStop(1, "transparent")
+            ctx.fillStyle = grad
+            ctx.fillRect(0, 0, width, height)
+          }
         }
       }
     }
@@ -519,6 +570,69 @@ BarWidget {
           enabled: Boolean(root.activePlayer && root.activePlayer.canGoNext)
           opacity: enabled ? 1.0 : 0.4
           onClicked: root.runAction("next", root.activePlayer)
+        }
+      }
+
+      // Visualizer Flow Switcher Row
+      Row {
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.space(6)
+
+        Repeater {
+          model: [
+            { id: "wave", name: "Wave", icon: "󰎆" },
+            { id: "bars", name: "Bars", icon: "󰝛" },
+            { id: "dots", name: "Dots", icon: "󰄰" },
+            { id: "particles", name: "Sparks", icon: "󰠱" },
+            { id: "pulse", name: "Pulse", icon: "󰓎" }
+          ]
+
+          BorderSurface {
+            id: flowBtn
+            required property var modelData
+            readonly property bool isSelected: root.visualizerMode === modelData.id
+
+            width: Style.space(56)
+            height: Style.space(26)
+            radius: Style.spacing.labelGap
+            color: isSelected
+              ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+              : (flowMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
+            borderSpec: isSelected
+              ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
+              : Border.none()
+
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(3)
+              Text {
+                text: flowBtn.modelData.icon
+                color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              Text {
+                text: flowBtn.modelData.name
+                color: flowBtn.isSelected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: flowBtn.isSelected
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+
+            MouseArea {
+              id: flowMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                root.visualizerMode = flowBtn.modelData.id
+                waveCanvas.requestPaint()
+              }
+            }
+          }
         }
       }
 
