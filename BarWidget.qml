@@ -7,7 +7,7 @@ import "MediaModel.js" as MediaModel
 
 BarWidget {
   id: root
-  moduleName: "nek0.media"
+  moduleName: "custom.media"
 
   property var service: null
   property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
@@ -18,10 +18,10 @@ BarWidget {
     if (!root.bar || !root.bar.shell) return null
     if (root.moduleName && root.bar.shell.serviceFor(root.moduleName))
       return root.bar.shell.serviceFor(root.moduleName)
-    if (root.bar.shell.serviceFor("nek0.media"))
-      return root.bar.shell.serviceFor("nek0.media")
     if (root.bar.shell.serviceFor("custom.media"))
       return root.bar.shell.serviceFor("custom.media")
+    if (root.bar.shell.serviceFor("nek0.media"))
+      return root.bar.shell.serviceFor("nek0.media")
     if (root.bar.shell.serviceFor("omarchy.media"))
       return root.bar.shell.serviceFor("omarchy.media")
     if (root.bar.shell.firstPartyServiceFor("omarchy.media"))
