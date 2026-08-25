@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
+import Quickshell.Hyprland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -16,6 +17,8 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
+  readonly property var toplevels: Hyprland.toplevels ? Hyprland.toplevels.values : []
+
   readonly property var playbackStreams: {
     var list = []
     for (var i = 0; i < nodes.length; i++) {
@@ -25,7 +28,7 @@ Item {
     return list
   }
 
-  // Active PipeWire stream players (e.g. Seanime desktop app, web games, non-MPRIS browser audio)
+  // Active PipeWire stream players (e.g. Seanime desktop app, dulo.gd / web audio, non-MPRIS streams)
   readonly property var streamPlayers: {
     var list = []
     for (var i = 0; i < playbackStreams.length; i++) {
@@ -43,7 +46,7 @@ Item {
         }
       }
       if (!hasMpris) {
-        var vp = MediaModel.createVirtualStreamPlayer(s)
+        var vp = MediaModel.createVirtualStreamPlayer(s, root.toplevels)
         if (vp) list.push(vp)
       }
     }
@@ -54,8 +57,28 @@ Item {
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
   readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying) || (activePlayer.isStreamPlayer))
-  readonly property string title: activePlayer ? MediaModel.cleanTitle(activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || "", activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || "") : ""
-  readonly property string artist: activePlayer ? MediaModel.cleanArtist(activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || "", activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || "", activePlayer) : ""
+  
+  readonly property string title: {
+    if (!activePlayer) return ""
+    var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
+    var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
+    var cleaned = MediaModel.cleanTitle(t, a)
+    if (!cleaned) {
+      // Fallback to Hyprland window title for the active player's desktop entry or identity
+      var winTitle = MediaModel.findWindowTitleForPid("", activePlayer.desktopEntry || activePlayer.identity, root.toplevels)
+      if (winTitle) cleaned = MediaModel.cleanTitle(winTitle, a)
+    }
+    if (cleaned) return cleaned
+    return activePlayer.identity || activePlayer.desktopEntry || "Media Playing"
+  }
+
+  readonly property string artist: {
+    if (!activePlayer) return ""
+    var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
+    var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
+    return MediaModel.cleanArtist(a, t, activePlayer)
+  }
+
   readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
   readonly property string artUrl: activePlayer && activePlayer.trackArtUrl ? activePlayer.trackArtUrl : ""
   readonly property string identity: activePlayer ? (activePlayer.identity || activePlayer.desktopEntry || "") : ""
@@ -229,57 +252,36 @@ Item {
   }
 
   function selectActivePlayer() {
-    var preferred = null
-    var trackPlayer = null
-    var trackProxy = null
-    var streamPlayer = null
-    var streamProxy = null
-    var controllablePlayer = null
-    var controllableProxy = null
-    var identityPlayer = null
-    var identityProxy = null
-
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (!p) continue
-
-      var proxy = isProxyPlayer(p)
-
-      if (preferredPlayerKey && playerKey(p) === preferredPlayerKey && hasMetadata(p)) preferred = p
-
-      if (playerHasPlaybackStream(p)) {
-        if (!proxy && !streamPlayer) streamPlayer = p
-        else if (proxy && !streamProxy) streamProxy = p
-      } else if (hasTrackMetadata(p)) {
-        if (!proxy && !trackPlayer) trackPlayer = p
-        else if (proxy && !trackProxy) trackProxy = p
-      } else if (playerCanControl(p)) {
-        if (!proxy && !controllablePlayer) controllablePlayer = p
-        else if (proxy && !controllableProxy) controllableProxy = p
-      } else if (hasMetadata(p)) {
-        if (!proxy && !identityPlayer) identityPlayer = p
-        else if (proxy && !identityProxy) identityProxy = p
+    // 1. User explicitly selected a preferred player/source
+    if (preferredPlayerKey) {
+      var preferred = playerForKey(preferredPlayerKey)
+      if (preferred && (hasMetadata(preferred) || preferred.isStreamPlayer)) {
+        return preferred
       }
     }
 
-    if (preferred) return preferred
-    var streamCandidate = streamPlayer || streamProxy
-    var streamPreferred = preferred && playerHasPlaybackStream(preferred) ? preferred : null
-
-    // 1. Prioritize playing MPRIS player with matching audio stream
+    // 2. Currently playing MPRIS player with matching PipeWire audio stream
     var playingMprisWithStream = oldestPlayingPlayer(true)
     if (playingMprisWithStream) return playingMprisWithStream
 
-    // 2. Prioritize playing MPRIS player without stream check
+    // 3. Currently playing MPRIS player
     var playingMpris = oldestPlayingPlayer(false)
     if (playingMpris) return playingMpris
 
-    // 3. Prioritize active virtual stream player (e.g. Seanime desktop app or browser stream)
+    // 4. Currently playing PipeWire stream (Seanime, dulo.gd, web stream)
     for (var s = 0; s < streamPlayers.length; s++) {
       if (streamPlayers[s] && streamPlayers[s].isPlaying) return streamPlayers[s]
     }
 
-    return streamPreferred || streamCandidate || preferred || trackPlayer || trackProxy || controllablePlayer || controllableProxy || (streamPlayers.length > 0 ? streamPlayers[0] : null) || identityPlayer || identityProxy || null
+    // 5. Fallbacks
+    if (players.length > 0) {
+      for (var i = 0; i < players.length; i++) {
+        if (hasMetadata(players[i])) return players[i]
+      }
+    }
+    if (streamPlayers.length > 0) return streamPlayers[0]
+
+    return null
   }
 
   function cycleSource() {
@@ -352,8 +354,11 @@ Item {
 
   function selectPlayer(key) {
     var player = playerForKey(key)
-    if (!player || (!hasMetadata(player) && !player.isStreamPlayer)) return false
+    if (!player) return false
     preferredPlayerKey = playerKey(player)
+    if (!player.isPlaying) {
+      playPlayer(player)
+    }
     return true
   }
 
@@ -365,6 +370,10 @@ Item {
     }
     if (player.canPlay) {
       player.play()
+      return true
+    }
+    if (player.canTogglePlaying && !player.isPlaying) {
+      player.togglePlaying()
       return true
     }
     return false
@@ -425,11 +434,6 @@ Item {
   function playerForAction(action, targetKey) {
     var targeted = playerForKey(targetKey)
     if (targeted) return targeted
-
-    if (action === "pause" || action === "playPause") {
-      var oldest = oldestPlayingPlayer(true) || oldestPlayingPlayer(false)
-      if (oldest) return oldest
-    }
 
     if (canHandleAction(activePlayer, action) || (activePlayer && activePlayer.isStreamPlayer)) return activePlayer
 

@@ -44,8 +44,38 @@ function nodeProps(node) {
   return node && node.ready && node.properties ? node.properties : (node && node.properties ? node.properties : {})
 }
 
+function isBlacklistedStream(node) {
+  if (!node) return true
+  var p = nodeProps(node)
+  var raw = [
+    p["application.name"] || "",
+    p["application.process.binary"] || "",
+    p["node.name"] || "",
+    node.name || "",
+    node.description || ""
+  ].join(" ").toLowerCase()
+
+  var blacklisted = [
+    "speech-dispatcher",
+    "speech-dispatcher-dummy",
+    "sd_dummy",
+    "speechd",
+    "spdsend",
+    "omarchy_speaker_tuning",
+    "quickshell",
+    "cava",
+    "easyeffects",
+    "pulseeffects",
+    "rtkit-daemon"
+  ]
+
+  return blacklisted.some(function(b) {
+    return raw.indexOf(b) !== -1
+  })
+}
+
 function isPlaybackStream(node) {
-  if (!node || !node.isStream) return false
+  if (!node || !node.isStream || isBlacklistedStream(node)) return false
   if (node.isSink === true) return true
 
   var mediaClass = String(node.type || (node.properties && node.properties["media.class"]) || "")
@@ -170,7 +200,8 @@ function cleanTitle(rawTitle, rawArtist) {
   var title = String(rawTitle || "").trim()
   if (!title) return ""
 
-  // 1. Remove common website suffixes first
+  // 1. Remove browser / app suffixes
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|Dulo TV)$/i, "")
   title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
@@ -183,7 +214,12 @@ function cleanTitle(rawTitle, rawArtist) {
   // 3. Remove file extensions
   title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
 
-  // 4. If title is "Artist - Song", but NOT an episode number like "Anime - 01" or "Show - Ep 2"
+  // 4. If title is a generic placeholder like "AudioStream" or "playback", return empty so window title can be used
+  if (/^(?:AudioStream|playback|Stream|Audio|Default|Playback|Video)$/i.test(title)) {
+    return ""
+  }
+
+  // 5. If title is "Artist - Song", but NOT an episode number like "Anime - 01" or "Show - Ep 2"
   if (!rawArtist && title.indexOf(" - ") !== -1) {
     var parts = title.split(" - ")
     if (parts.length === 2) {
@@ -207,10 +243,11 @@ function cleanArtist(rawArtist, rawTitle, player) {
     else artist = String(rawArtist).trim()
   }
 
-  if (artist && artist !== "Unknown" && artist !== "undefined") return artist
+  if (artist && artist !== "Unknown" && artist !== "undefined" && artist !== "Playback") return artist
 
   // If artist is missing, check if title had "Artist - Title"
   var title = String(rawTitle || "").trim()
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|Dulo TV)$/i, "")
   title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
@@ -228,7 +265,7 @@ function cleanArtist(rawArtist, rawTitle, player) {
 
   // Fallback to app source name
   var src = sourceName(player)
-  if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
+  if (src && src !== "Player" && src !== "Media" && src !== "Unknown" && src !== "Playback") return src
 
   return ""
 }
@@ -243,7 +280,11 @@ function sourceName(player) {
   if (id.indexOf("zen") !== -1) return "Zen Browser"
   if (id.indexOf("firefox") !== -1) return "Firefox"
   if (id.indexOf("brave") !== -1) return "Brave"
-  if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return "Chrome"
+  if (id.indexOf("chrome") !== -1) return "Chrome"
+  if (id.indexOf("chromium") !== -1 || id.indexOf("electron") !== -1) {
+    if (id.indexOf("seanime") !== -1) return "Seanime"
+    return "Chromium"
+  }
   if (id.indexOf("edge") !== -1) return "Edge"
   if (id.indexOf("cliamp") !== -1) return "cliamp"
   if (id.indexOf("stremio") !== -1) return "Stremio"
@@ -285,25 +326,65 @@ function osdMessage(player, fallback) {
   return label || fallback
 }
 
+function findWindowTitleForPid(pid, appClass, toplevels) {
+  if (!toplevels || toplevels.length === 0) return ""
+  var pStr = String(pid || "")
+  for (var i = 0; i < toplevels.length; i++) {
+    var t = toplevels[i]
+    if (!t) continue
+    if (pStr && String(t.pid || "") === pStr && t.title) {
+      return t.title
+    }
+    if (appClass && (t.waylandAppId === appClass || t.cls === appClass || t.class === appClass) && t.title) {
+      return t.title
+    }
+  }
+  return ""
+}
+
 // Virtual player wrapper created from an active Pipewire audio stream when no MPRIS player exists
-function createVirtualStreamPlayer(node) {
-  if (!node) return null
+function createVirtualStreamPlayer(node, toplevels) {
+  if (!node || isBlacklistedStream(node)) return null
   var p = nodeProps(node)
-  var appName = p["application.name"] || node.description || p["node.name"] || node.name || "Audio Stream"
-  var mediaName = p["media.name"] || node.description || "Playback"
+  var pid = p["application.process.id"] || ""
+  var binary = p["application.process.binary"] || ""
+  var rawApp = p["application.name"] || node.description || p["node.name"] || node.name || "Audio Stream"
+  
+  // Resolve accurate app name (e.g. seanime-denshi / Chromium -> Seanime)
+  var appName = rawApp
+  if (rawApp.toLowerCase().indexOf("seanime") !== -1 || binary.toLowerCase().indexOf("seanime") !== -1) {
+    appName = "Seanime"
+  } else if (rawApp === "Zen" || binary === "zen-bin") {
+    appName = "Zen Browser"
+  }
+
+  // Look up actual window title from Hyprland
+  var winTitle = findWindowTitleForPid(pid, binary || rawApp, toplevels)
+  var mediaName = p["media.name"] || node.description || ""
+  
+  // Prefer window title if mediaName is generic (like "AudioStream", "playback", etc.)
+  var resolvedTitle = cleanTitle(mediaName, appName)
+  if (!resolvedTitle && winTitle) {
+    resolvedTitle = cleanTitle(winTitle, appName)
+  }
+  if (!resolvedTitle) {
+    resolvedTitle = winTitle || mediaName || appName
+  }
+
+  var isMuted = Boolean(node.audio && node.audio.muted)
 
   return {
     isStreamPlayer: true,
     streamId: String(node.id || node.name || appName),
     dbusName: "pipewire.stream." + (node.id || node.name || appName),
     identity: appName,
-    desktopEntry: p["application.process.binary"] || p["application.name"] || "",
+    desktopEntry: binary || rawApp,
     appName: appName,
-    trackTitle: cleanTitle(mediaName, appName),
-    trackArtist: cleanArtist("", mediaName, { appName: appName, identity: appName }),
+    trackTitle: resolvedTitle,
+    trackArtist: cleanArtist("", resolvedTitle, { appName: appName, identity: appName }),
     trackAlbum: "",
     trackArtUrl: "",
-    isPlaying: Boolean(node.audio && !node.audio.muted),
+    isPlaying: !isMuted,
     canPlay: true,
     canPause: true,
     canTogglePlaying: true,
@@ -324,6 +405,7 @@ if (typeof module !== "undefined") {
     canHandleAction: canHandleAction,
     canCycleSource: canCycleSource,
     nodeProps: nodeProps,
+    isBlacklistedStream: isBlacklistedStream,
     isPlaybackStream: isPlaybackStream,
     streamLabelKey: streamLabelKey,
     rawStreamLabel: rawStreamLabel,
@@ -340,6 +422,7 @@ if (typeof module !== "undefined") {
     sourceIcon: sourceIcon,
     labelFor: labelFor,
     osdMessage: osdMessage,
+    findWindowTitleForPid: findWindowTitleForPid,
     createVirtualStreamPlayer: createVirtualStreamPlayer
   }
 }

@@ -115,11 +115,15 @@ BarWidget {
 
   function selectPlayer(targetPlayer) {
     if (!targetPlayer) return
+    var key = playerKey(targetPlayer)
     if (mediaService && typeof mediaService.selectPlayer === "function") {
-      mediaService.selectPlayer(playerKey(targetPlayer))
-      return
+      mediaService.selectPlayer(key)
     }
-    if (typeof targetPlayer.play === "function") targetPlayer.play()
+    if (typeof targetPlayer.play === "function") {
+      targetPlayer.play()
+    } else if (typeof targetPlayer.togglePlaying === "function") {
+      targetPlayer.togglePlaying()
+    }
   }
 
   function sourceName(player) {
@@ -264,7 +268,7 @@ BarWidget {
           id: idleLabel
           visible: !root.hasMedia
           text: "Music"
-          color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4)
+          color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.4)
           font.family: root.bar ? root.bar.fontFamily : Style.font.family
           font.pixelSize: Style.font.bodySmall
           font.bold: true
@@ -303,7 +307,7 @@ BarWidget {
             id: artistText
             visible: root.artist !== ""
             text: root.artist
-            color: Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.3)
+            color: Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.3)
             font.family: root.bar ? root.bar.fontFamily : Style.font.family
             font.pixelSize: Style.font.bodySmall
             anchors.verticalCenter: parent.verticalCenter
