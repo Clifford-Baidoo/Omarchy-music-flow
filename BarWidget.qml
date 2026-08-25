@@ -62,7 +62,7 @@ BarWidget {
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
   readonly property bool isPlaying: mediaService ? mediaService.isPlaying : (activePlayer && activePlayer.isPlaying)
 
-  // Smooth fluid energy level (1.0 when playing, 0.15 calm ambient drift when paused)
+  // Smooth fluid energy level (1.0 when playing, 0.18 calm ambient drift when paused)
   readonly property real targetEnergy: isPlaying ? 1.0 : (hasMedia ? 0.18 : 0.08)
   property real currentEnergy: targetEnergy
 
@@ -157,11 +157,11 @@ BarWidget {
   }
 
   function sourceName(player) {
-    return MediaModel.sourceName(player, mediaService ? mediaService.activeWinTitle : "")
+    return MediaModel.sourceName(player)
   }
 
   function sourceIcon(player) {
-    return MediaModel.sourceIcon(player, mediaService ? mediaService.activeWinTitle : "")
+    return MediaModel.sourceIcon(player)
   }
 
   visible: true

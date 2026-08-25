@@ -3,7 +3,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
-import Quickshell.Wayland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -17,13 +16,6 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
-  readonly property var toplevels: {
-    try {
-      return ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
-    } catch (e) {
-      return []
-    }
-  }
 
   readonly property var playbackStreams: {
     var list = []
@@ -38,11 +30,6 @@ Item {
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
 
-  readonly property string activeWinTitle: {
-    if (!activePlayer) return ""
-    return MediaModel.findWindowTitleForApp(activePlayer.desktopEntry || activePlayer.identity || "", root.toplevels)
-  }
-
   readonly property bool isPlaying: {
     if (!activePlayer) return false
     if (activePlayer.isPlaying) return true
@@ -55,20 +42,8 @@ Item {
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
-    var hasActiveStream = MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
-
-    // If browser is actively playing an embedded video on an anime/streaming site, prioritize page title
-    if (hasActiveStream && root.activeWinTitle) {
-      var winClean = MediaModel.cleanTitle(root.activeWinTitle, a)
-      if (winClean) return winClean
-    }
-
     var cleaned = MediaModel.cleanTitle(t, a)
     if (cleaned) return cleaned
-    if (root.activeWinTitle) {
-      var winFallback = MediaModel.cleanTitle(root.activeWinTitle, a)
-      if (winFallback) return winFallback
-    }
     return activePlayer.identity || activePlayer.desktopEntry || "Media Playing"
   }
 
@@ -76,7 +51,7 @@ Item {
     if (!activePlayer) return ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
-    return MediaModel.cleanArtist(a, t, activePlayer, root.activeWinTitle)
+    return MediaModel.cleanArtist(a, t, activePlayer)
   }
 
   readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
@@ -300,13 +275,11 @@ Item {
   }
 
   function labelFor(player) {
-    var winTitle = MediaModel.findWindowTitleForApp((player && (player.desktopEntry || player.identity)) || "", root.toplevels)
-    return MediaModel.labelFor(player, winTitle)
+    return MediaModel.labelFor(player)
   }
 
   function osdMessage(player, fallback) {
-    var winTitle = MediaModel.findWindowTitleForApp((player && (player.desktopEntry || player.identity)) || "", root.toplevels)
-    return MediaModel.osdMessage(player, fallback, winTitle)
+    return MediaModel.osdMessage(player, fallback)
   }
 
   function trackSignature(player) {

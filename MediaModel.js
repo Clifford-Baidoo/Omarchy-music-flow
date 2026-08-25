@@ -10,7 +10,7 @@ function isProxyPlayer(player) {
 
 function hasMetadata(player) {
   if (!player || isProxyPlayer(player)) return false
-  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry || player.isStreamPlayer) return true
+  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry) return true
   if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"])) return true
   return false
 }
@@ -23,12 +23,11 @@ function hasTrackMetadata(player) {
 }
 
 function playerCanControl(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious || player.isStreamPlayer))
+  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
 }
 
 function canHandleAction(player, action) {
   if (!player) return false
-  if (player.isStreamPlayer) return true
   if (action === "next") return !!player.canGoNext
   if (action === "previous") return !!player.canGoPrevious
   if (action === "play") return !!(player.canPlay || player.canTogglePlaying)
@@ -38,7 +37,7 @@ function canHandleAction(player, action) {
 }
 
 function canCycleSource(player) {
-  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay || player.isStreamPlayer))
+  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay))
 }
 
 function nodeProps(node) {
@@ -220,7 +219,7 @@ function playerHasActiveStream(player, playbackStreams) {
 
 function playerKey(player) {
   if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
+  return String(player.dbusName || player.desktopEntry || player.identity || "")
 }
 
 function playerCanonicalKey(player) {
@@ -255,55 +254,41 @@ function trackChanged(previousSignature, player) {
   return trackSignature(player) !== String(previousSignature || "")
 }
 
-// Cleans up common ugly tags from media titles (e.g. FMovies, Dulo TV, Animepahe, YouTube, movie/series sites)
+// Cleans up common ugly tags from media titles (e.g. YouTube, Animepahe, movie/music titles)
 function cleanTitle(rawTitle, rawArtist) {
   var title = String(rawTitle || "").trim()
   if (!title) return ""
 
-  // 1. Remove browser suffixes first
+  // 1. Remove browser suffixes
   title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Microsoft Edge|Vivaldi|Opera)$/i, "")
 
-  // 2. Remove site branding suffixes (FMovies, Dulo TV, Animepahe, 123Movies, BFlix, SFlix, etc.)
-  title = title.replace(/\s*(?:[-—|•]|on|::|\|)\s*(?:Dulo TV|Dulo\.gd|Dulo|FMovies\.to|FMovies\.ps|FMovies|FmoviesZ|BFlix|SFlix|123Movies|Gomovies|Soap2Day|SolarMovie|LookMovie|MyFlixer|FlixHQ|WatchSeries|Cineb|Animepahe|HiAnime|AniWave|Gogoanime|Zoro)(?:\.[a-z]{2,4})?$/i, "")
-  title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  // 2. Remove site branding suffixes
+  title = title.replace(/\s*(?:[-—|•]|on|::|\|)\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili|Animepahe|HiAnime|AniWave|Gogoanime|FMovies|Dulo TV|Dulo)(?:\.[a-z]{2,4})?$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
-
-  // 3. Remove generic site taglines & homepages
-  title = title.replace(/\s*[-—|•]\s*Stream Movies & TV Shows.*$/i, "")
-  title = title.replace(/\s*[-—|•|\|]\s*Watch Movies (?:online )?(?:for )?free.*$/i, "")
-  title = title.replace(/^FMovies\s*[-—|•|\|]\s*/i, "")
   title = title.replace(/\s*::\s*.*$/i, "")
 
-  // 4. Remove streaming filler phrases
+  // 3. Remove streaming filler phrases
   title = title.replace(/\s*(?:Full Movie|Full Show|Full HD|HD Free|Online Free HD|Online Free|Watch Free Online|Watch Online Free|Watch Online|Free Online|Online HD|Free HD|HD Online|Free Stream|Streaming Online)\s*/gi, " ")
-  title = title.replace(/\s+on\s+[A-Za-z0-9\.]+(?:\s+Free)?$/i, "")
-
-  // 5. Remove "Watch " prefix at the start
   title = title.replace(/^Watch\s+/i, "")
 
-  // 6. Remove anime release group tags and video quality brackets
+  // 4. Remove anime release group tags and video quality brackets
   title = title.replace(/^\[[^\]]+\]\s*/g, "")
   title = title.replace(/\s*\[[0-9a-fA-F]{8}\]/g, "") // CRC32 hashes
   title = title.replace(/\s*\[(?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\]/gi, "")
   title = title.replace(/\s*\((?:1080p|720p|480p|2160p|4k|aac|hevc|x264|x265|dvd|bd|bluray|vostfr|sub)\)/gi, "")
 
-  // 7. Remove file extensions
+  // 5. Remove file extensions
   title = title.replace(/\.(mkv|mp4|avi|webm|mp3|flac|wav|m4a|ogg|opus)$/i, "")
 
-  // 8. Strip duplicate artist prefix if present
+  // 6. Strip duplicate artist prefix if present
   if (rawArtist && title.toLowerCase().indexOf(String(rawArtist).toLowerCase() + " - ") === 0) {
     title = title.substring(String(rawArtist).length + 3).trim()
   }
 
-  // 9. Clean up multiple consecutive spaces
+  // 7. Clean up multiple consecutive spaces
   title = title.replace(/\s{2,}/g, " ").trim()
 
-  // 10. If title is literally just the site name or domain, show "Streaming Video"
-  if (/^(?:dulo\.gd|dulo|fmovies(?:\.to|\.ps|\.llc)?|animepahe|hianime|123movies|watch movies online for free)$/i.test(title)) {
-    return "Streaming Video"
-  }
-
-  // 11. If title had "Artist - Title", split it unless right side is episode/season
+  // 8. If title had "Artist - Title", split it unless right side is episode/season
   if (!rawArtist && title.indexOf(" - ") !== -1) {
     var parts = title.split(" - ")
     if (parts.length === 2) {
@@ -320,7 +305,7 @@ function cleanTitle(rawTitle, rawArtist) {
 }
 
 // Derives a clean artist or source badge
-function cleanArtist(rawArtist, rawTitle, player, winTitle) {
+function cleanArtist(rawArtist, rawTitle, player) {
   var artist = ""
   if (rawArtist) {
     if (Array.isArray(rawArtist)) artist = rawArtist.join(", ")
@@ -347,7 +332,7 @@ function cleanArtist(rawArtist, rawTitle, player, winTitle) {
   }
 
   // Fallback to detected platform name
-  var src = sourceName(player, winTitle)
+  var src = sourceName(player)
   if (src && src !== "Player" && src !== "Media" && src !== "Unknown") return src
 
   return ""
@@ -373,21 +358,23 @@ function extractArtUrl(player) {
 }
 
 // Identifies the exact playing website / streaming service or native desktop app
-function detectPlatform(player, winTitle) {
+function detectPlatform(player) {
+  if (!player) return { name: "Media", icon: "󰝚" }
+
   var meta = (player && player.metadata) ? player.metadata : {}
-  var url = String(meta["xesam:url"] || (player && player.url) || "").toLowerCase()
-  var rawTitle = (String((player && player.trackTitle) || meta["xesam:title"] || "") + " " + String(winTitle || "")).toLowerCase()
-  var artUrl = String((player && player.trackArtUrl) || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
-  var id = String((player && (player.identity || player.desktopEntry || player.dbusName || player.appName)) || "").toLowerCase()
+  var url = String(meta["xesam:url"] || player.url || "").toLowerCase()
+  var rawTitle = String(player.trackTitle || meta["xesam:title"] || "").toLowerCase()
+  var artUrl = String(player.trackArtUrl || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
+  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
 
-  // 1. YouTube
-  if (url.indexOf("youtube.com") !== -1 || url.indexOf("youtu.be") !== -1 || artUrl.indexOf("ytimg.com") !== -1 || rawTitle.indexOf("youtube") !== -1) {
-    return { name: "YouTube", icon: "󰗃" }
-  }
-
-  // 2. Spotify
+  // 1. Spotify
   if (id.indexOf("spotify") !== -1 || url.indexOf("spotify.com") !== -1) {
     return { name: "Spotify", icon: "󰓇" }
+  }
+
+  // 2. YouTube
+  if (url.indexOf("youtube.com") !== -1 || url.indexOf("youtu.be") !== -1 || artUrl.indexOf("ytimg.com") !== -1 || rawTitle.indexOf("youtube") !== -1) {
+    return { name: "YouTube", icon: "󰗃" }
   }
 
   // 3. Twitch
@@ -395,35 +382,34 @@ function detectPlatform(player, winTitle) {
     return { name: "Twitch", icon: "󰕧" }
   }
 
-  // 4. Movie & Series Streaming Platforms (FMovies, Dulo TV, 123Movies, BFlix, SFlix, SolarMovie, etc.)
-  if (rawTitle.indexOf("fmovies") !== -1) return { name: "FMovies", icon: "󰐹" }
-  if (rawTitle.indexOf("dulo.gd") !== -1 || rawTitle.indexOf("dulo tv") !== -1 || rawTitle.indexOf("dulo") !== -1) return { name: "Dulo TV", icon: "󰐹" }
-  if (rawTitle.indexOf("123movies") !== -1 || rawTitle.indexOf("bflix") !== -1 || rawTitle.indexOf("sflix") !== -1 || rawTitle.indexOf("solarmovie") !== -1 || rawTitle.indexOf("soap2day") !== -1) {
-    return { name: "Movies", icon: "󰐹" }
+  // 4. SoundCloud & Bandcamp
+  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) {
+    return { name: "SoundCloud", icon: "󰝚" }
+  }
+  if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) {
+    return { name: "Bandcamp", icon: "󰝚" }
   }
 
-  // 5. Anime streaming sites (Animepahe, HiAnime, 9anime, Gogoanime, Zoro, etc.)
-  if (rawTitle.indexOf("animepahe") !== -1) return { name: "Animepahe", icon: "󰚩" }
-  if (rawTitle.indexOf("hianime") !== -1) return { name: "HiAnime", icon: "󰚩" }
+  // 5. Anime streaming sites (Animepahe, HiAnime, 9anime, Gogoanime)
+  if (rawTitle.indexOf("animepahe") !== -1 || url.indexOf("animepahe") !== -1) return { name: "Animepahe", icon: "󰚩" }
+  if (rawTitle.indexOf("hianime") !== -1 || url.indexOf("hianime") !== -1) return { name: "HiAnime", icon: "󰚩" }
   if (rawTitle.indexOf("9anime") !== -1 || rawTitle.indexOf("aniwave") !== -1) return { name: "AniWave", icon: "󰚩" }
   if (rawTitle.indexOf("gogoanime") !== -1 || rawTitle.indexOf("anitaku") !== -1) return { name: "Gogoanime", icon: "󰚩" }
 
-  // 6. Crunchyroll & Netflix
+  // 6. Movie streaming sites (FMovies, Dulo TV, Netflix, Crunchyroll)
+  if (rawTitle.indexOf("fmovies") !== -1 || url.indexOf("fmovies") !== -1) return { name: "FMovies", icon: "󰐹" }
+  if (rawTitle.indexOf("dulo.gd") !== -1 || rawTitle.indexOf("dulo tv") !== -1 || rawTitle.indexOf("dulo") !== -1 || url.indexOf("dulo") !== -1) return { name: "Dulo TV", icon: "󰐹" }
   if (url.indexOf("crunchyroll.com") !== -1 || rawTitle.indexOf("crunchyroll") !== -1) return { name: "Crunchyroll", icon: "󰚩" }
   if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) return { name: "Netflix", icon: "󰝆" }
 
-  // 7. SoundCloud & Bandcamp
-  if (url.indexOf("soundcloud.com") !== -1 || rawTitle.indexOf("soundcloud") !== -1) return { name: "SoundCloud", icon: "󰝚" }
-  if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) return { name: "Bandcamp", icon: "󰝚" }
-
-  // 8. Dedicated media players
+  // 7. Dedicated desktop media players
   if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
   if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
   if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
   if (id.indexOf("stremio") !== -1) return { name: "Stremio", icon: "󰐹" }
   if (id.indexOf("celluloid") !== -1) return { name: "Celluloid", icon: "󰐹" }
 
-  // 9. Fallbacks to browser app names
+  // 8. Fallback to browser application name
   if (id.indexOf("zen") !== -1) return { name: "Zen Browser", icon: "󰈹" }
   if (id.indexOf("firefox") !== -1) return { name: "Firefox", icon: "󰈹" }
   if (id.indexOf("brave") !== -1) return { name: "Brave", icon: "󰊯" }
@@ -434,37 +420,24 @@ function detectPlatform(player, winTitle) {
   return { name: fallbackName, icon: "󰝚" }
 }
 
-function sourceName(player, winTitle) {
-  return detectPlatform(player, winTitle).name
+function sourceName(player) {
+  return detectPlatform(player).name
 }
 
-function sourceIcon(player, winTitle) {
-  return detectPlatform(player, winTitle).icon
+function sourceIcon(player) {
+  return detectPlatform(player).icon
 }
 
-function labelFor(player, winTitle) {
+function labelFor(player) {
   if (!player) return ""
-  return player.trackTitle || player.identity || player.desktopEntry || sourceName(player, winTitle) || ""
+  return player.trackTitle || player.identity || player.desktopEntry || sourceName(player) || ""
 }
 
-function osdMessage(player, fallback, winTitle) {
+function osdMessage(player, fallback) {
   if (!player) return fallback
-  var label = labelFor(player, winTitle)
+  var label = labelFor(player)
   if (label && player.trackArtist) return label + " - " + player.trackArtist
   return label || fallback
-}
-
-function findWindowTitleForApp(appIdentifier, toplevels) {
-  if (!toplevels || toplevels.length === 0 || !appIdentifier) return ""
-  for (var i = 0; i < toplevels.length; i++) {
-    var t = toplevels[i]
-    if (!t) continue
-    var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
-    if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
-      if (t.title) return t.title
-    }
-  }
-  return ""
 }
 
 if (typeof module !== "undefined") {
@@ -496,7 +469,6 @@ if (typeof module !== "undefined") {
     sourceName: sourceName,
     sourceIcon: sourceIcon,
     labelFor: labelFor,
-    osdMessage: osdMessage,
-    findWindowTitleForApp: findWindowTitleForApp
+    osdMessage: osdMessage
   }
 }
