@@ -46,7 +46,7 @@ Clone this repository and run the install script:
 ```bash
 git clone https://github.com/Clifford-Baidoo/omarchy-music-flow.git
 cd omarchy-music-flow
-chmod +x install.sh
+chmod +x install.sh update.sh uninstall.sh
 ./install.sh
 ```
 
@@ -58,13 +58,29 @@ The installer will:
 
 ---
 
+## 🔄 Updating
+
+If you already have Music Flow installed and want to update to the latest version:
+
+```bash
+cd omarchy-music-flow
+./update.sh
+```
+
+The updater will:
+1. Pull the latest commits from the repository.
+2. Synchronize all plugin files to `~/.config/omarchy/plugins/custom.media/`.
+3. Clean up any deprecated legacy plugin directories.
+4. Reload `omarchy-shell` with the updated features and fixes.
+
+---
+
 ## 🗑️ Uninstallation
 
 To remove Music Flow and restore the default media widget:
 
 ```bash
 cd omarchy-music-flow
-chmod +x uninstall.sh
 ./uninstall.sh
 ```
 
@@ -75,6 +91,7 @@ chmod +x uninstall.sh
 | Action | Bar Widget Gesture | Floating Player Window |
 | :--- | :--- | :--- |
 | **Open / Close Panel** | `Left-Click` | `Click Outside` / `ESC` |
+| **Toggle Visualizer Text** | `Right-Click` | Flow Mode Row / Text Toggle |
 | **Play / Pause** | `Middle-Click` | Center Button (`󰏤` / `󰐊`) |
 | **Next Track** | `Scroll Down` | Forward Button (`󰒭`) |
 | **Previous Track** | `Scroll Up` | Back Button (`󰒮`) |
@@ -94,6 +111,7 @@ omarchy-music-flow/
 ├── MediaModel.js         # DBus player detection & metadata formatting
 ├── manifest.json         # Omarchy shell plugin manifest
 ├── install.sh            # Automated installer script
+├── update.sh             # Automated updater script
 ├── uninstall.sh          # Automated uninstaller script
 └── README.md             # Documentation & screenshots
 ```
