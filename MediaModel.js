@@ -10,7 +10,7 @@ function isProxyPlayer(player) {
 
 function hasMetadata(player) {
   if (!player || isProxyPlayer(player)) return false
-  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry) return true
+  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry || player.isStreamPlayer) return true
   if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"])) return true
   return false
 }
@@ -23,11 +23,12 @@ function hasTrackMetadata(player) {
 }
 
 function playerCanControl(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
+  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious || player.isStreamPlayer))
 }
 
 function canHandleAction(player, action) {
   if (!player) return false
+  if (player.isStreamPlayer) return true
   if (action === "next") return !!player.canGoNext
   if (action === "previous") return !!player.canGoPrevious
   if (action === "play") return !!(player.canPlay || player.canTogglePlaying)
@@ -37,7 +38,7 @@ function canHandleAction(player, action) {
 }
 
 function canCycleSource(player) {
-  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay))
+  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay || player.isStreamPlayer))
 }
 
 function nodeProps(node) {
@@ -219,11 +220,13 @@ function playerHasActiveStream(player, playbackStreams) {
 
 function playerKey(player) {
   if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || "")
+  return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
 }
 
 function playerCanonicalKey(player) {
   if (!player) return ""
+  if (player.isStreamPlayer && player.streamId) return player.streamId
+
   var dbus = String(player.dbusName || "").toLowerCase()
   var desktop = String(player.desktopEntry || "").toLowerCase()
   var identity = String(player.identity || "").toLowerCase()
@@ -263,19 +266,21 @@ function cleanTitle(rawTitle, rawArtist) {
   title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Microsoft Edge|Vivaldi|Opera)$/i, "")
 
   // 2. Remove site branding suffixes (FMovies, Dulo TV, Animepahe, 123Movies, BFlix, SFlix, etc.)
-  title = title.replace(/\s*(?:[-—|•]|on)\s*(?:Dulo TV|Dulo\.gd|Dulo|FMovies\.to|FMovies\.ps|FMovies|FmoviesZ|BFlix|SFlix|123Movies|Gomovies|Soap2Day|SolarMovie|LookMovie|MyFlixer|FlixHQ|WatchSeries|Cineb|Animepahe|HiAnime|AniWave|Gogoanime|Zoro)(?:\.[a-z]{2,4})?$/i, "")
+  title = title.replace(/\s*(?:[-—|•]|on|::|\|)\s*(?:Dulo TV|Dulo\.gd|Dulo|FMovies\.to|FMovies\.ps|FMovies|FmoviesZ|BFlix|SFlix|123Movies|Gomovies|Soap2Day|SolarMovie|LookMovie|MyFlixer|FlixHQ|WatchSeries|Cineb|Animepahe|HiAnime|AniWave|Gogoanime|Zoro)(?:\.[a-z]{2,4})?$/i, "")
   title = title.replace(/\s*[-—|•]\s*(?:YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
   // 3. Remove generic site taglines
   title = title.replace(/\s*[-—|•]\s*Stream Movies & TV Shows.*$/i, "")
+  title = title.replace(/\s*\|\s*Watch Movies Online.*$/i, "")
+  title = title.replace(/^FMovies\s*\|\s*/i, "")
   title = title.replace(/\s*::\s*.*$/i, "")
 
-  // 4. Remove streaming filler phrases: "Online Free HD", "Full Movie Online Free", "Watch Online Free", "Free HD", etc.
+  // 4. Remove streaming filler phrases
   title = title.replace(/\s*(?:Full Movie|Full Show|Full HD|HD Free|Online Free HD|Online Free|Watch Free Online|Watch Online Free|Watch Online|Free Online|Online HD|Free HD|HD Online|Free Stream|Streaming Online)\s*/gi, " ")
   title = title.replace(/\s+on\s+[A-Za-z0-9\.]+(?:\s+Free)?$/i, "")
 
-  // 5. Remove "Watch " prefix at the start (e.g. "Watch Breaking Bad Season 1..." -> "Breaking Bad Season 1...")
+  // 5. Remove "Watch " prefix at the start
   title = title.replace(/^Watch\s+/i, "")
 
   // 6. Remove anime release group tags and video quality brackets
@@ -366,13 +371,11 @@ function extractArtUrl(player) {
 
 // Identifies the exact playing website / streaming service or native desktop app
 function detectPlatform(player, winTitle) {
-  if (!player) return { name: "Media", icon: "󰝚" }
-
-  var meta = player.metadata || {}
-  var url = String(meta["xesam:url"] || player.url || "").toLowerCase()
-  var rawTitle = (String(player.trackTitle || meta["xesam:title"] || "") + " " + String(winTitle || "")).toLowerCase()
-  var artUrl = String(player.trackArtUrl || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
-  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
+  var meta = (player && player.metadata) ? player.metadata : {}
+  var url = String(meta["xesam:url"] || (player && player.url) || "").toLowerCase()
+  var rawTitle = (String((player && player.trackTitle) || meta["xesam:title"] || "") + " " + String(winTitle || "")).toLowerCase()
+  var artUrl = String((player && player.trackArtUrl) || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
+  var id = String((player && (player.identity || player.desktopEntry || player.dbusName || player.appName)) || "").toLowerCase()
 
   // 1. YouTube
   if (url.indexOf("youtube.com") !== -1 || url.indexOf("youtu.be") !== -1 || artUrl.indexOf("ytimg.com") !== -1 || rawTitle.indexOf("youtube") !== -1) {
@@ -424,7 +427,7 @@ function detectPlatform(player, winTitle) {
   if (id.indexOf("chrome") !== -1 || id.indexOf("chromium") !== -1) return { name: "Chrome", icon: "󰊯" }
   if (id.indexOf("edge") !== -1) return { name: "Edge", icon: "󰊯" }
 
-  var fallbackName = player.identity || player.desktopEntry || "Media"
+  var fallbackName = (player && (player.identity || player.desktopEntry)) || "Media"
   return { name: fallbackName, icon: "󰝚" }
 }
 

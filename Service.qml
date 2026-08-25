@@ -34,6 +34,60 @@ Item {
     return list
   }
 
+  function createWebStreamPlayers() {
+    var list = []
+    var seenTitles = {}
+    var mprisTitles = {}
+
+    for (var j = 0; j < players.length; j++) {
+      var mp = players[j]
+      if (mp && mp.trackTitle) mprisTitles[mp.trackTitle.toLowerCase()] = true
+    }
+
+    for (var i = 0; i < playbackStreams.length; i++) {
+      var s = playbackStreams[i]
+      if (!s) continue
+      var p = nodeProps(s)
+      var isCorked = p["pulse.corked"] === "true" || p["pulse.corked"] === true
+      if (isCorked) continue
+
+      var appName = (p["application.name"] || "").toLowerCase()
+      if (appName.indexOf("zen") !== -1 || appName.indexOf("firefox") !== -1 || appName.indexOf("chrome") !== -1 || appName.indexOf("chromium") !== -1) {
+        var winTitle = MediaModel.findWindowTitleForApp(appName, root.toplevels)
+        if (!winTitle) continue
+
+        var clean = MediaModel.cleanTitle(winTitle)
+        var platform = MediaModel.detectPlatform(null, winTitle)
+        var key = "web." + platform.name.toLowerCase() + "." + clean.toLowerCase()
+
+        if (clean && !seenTitles[key] && !mprisTitles[clean.toLowerCase()]) {
+          seenTitles[key] = true
+          list.push({
+            isStreamPlayer: true,
+            streamId: "stream.web." + (s.id || s.serial || i),
+            dbusName: "org.mpris.MediaPlayer2." + platform.name.toLowerCase(),
+            identity: platform.name,
+            desktopEntry: appName,
+            trackTitle: clean,
+            trackArtist: platform.name,
+            trackAlbum: "",
+            trackArtUrl: "",
+            isPlaying: true,
+            canPlay: true,
+            canPause: true,
+            canTogglePlaying: true,
+            canGoNext: false,
+            canGoPrevious: false,
+            streamNode: s
+          })
+        }
+      }
+    }
+
+    return list
+  }
+
+  readonly property var webStreamPlayers: createWebStreamPlayers()
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
@@ -57,6 +111,10 @@ Item {
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     var hasActiveStream = MediaModel.playerHasActiveStream(activePlayer, playbackStreams)
 
+    if (activePlayer.isStreamPlayer) {
+      return activePlayer.trackTitle || "Media Playing"
+    }
+
     // If browser is actively playing an embedded video on an anime/streaming site, prioritize page title
     if (hasActiveStream && root.activeWinTitle) {
       var winClean = MediaModel.cleanTitle(root.activeWinTitle, a)
@@ -74,6 +132,7 @@ Item {
 
   readonly property string artist: {
     if (!activePlayer) return ""
+    if (activePlayer.isStreamPlayer) return activePlayer.trackArtist || ""
     var t = activePlayer.trackTitle || (activePlayer.metadata && activePlayer.metadata["xesam:title"]) || ""
     var a = activePlayer.trackArtist || (activePlayer.metadata && activePlayer.metadata["xesam:artist"]) || ""
     return MediaModel.cleanArtist(a, t, activePlayer, root.activeWinTitle)
@@ -150,6 +209,10 @@ Item {
       var p = players[i]
       if (playerKey(p) === key || playerCanonicalKey(p) === cKey) return p
     }
+    for (var j = 0; j < webStreamPlayers.length; j++) {
+      var ws = webStreamPlayers[j]
+      if (playerKey(ws) === key || playerCanonicalKey(ws) === cKey) return ws
+    }
     return null
   }
 
@@ -182,6 +245,18 @@ Item {
       }
     }
 
+    for (var j = 0; j < webStreamPlayers.length; j++) {
+      var wsp = webStreamPlayers[j]
+      var wsKey = playerCanonicalKey(wsp)
+      alive[wsKey] = true
+      if (playerStartedAt[wsKey] === undefined) {
+        serial += 1
+        next[wsKey] = serial
+      } else {
+        next[wsKey] = playerStartedAt[wsKey]
+      }
+    }
+
     if (preferredPlayerKey && !alive[preferredPlayerKey]) preferredPlayerKey = ""
 
     playSerial = serial
@@ -192,6 +267,16 @@ Item {
     var list = []
     var seen = {}
 
+    // 1. Add dedicated web streaming players (e.g. Dulo, FMovies, Animepahe)
+    for (var w = 0; w < webStreamPlayers.length; w++) {
+      var ws = webStreamPlayers[w]
+      var wsKey = playerCanonicalKey(ws)
+      if (!wsKey || seen[wsKey]) continue
+      seen[wsKey] = true
+      list.push(ws)
+    }
+
+    // 2. Add standard MPRIS players (Spotify, MPV, VLC, YouTube on Zen)
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
@@ -221,6 +306,14 @@ Item {
     var list = []
     var seen = {}
 
+    for (var w = 0; w < webStreamPlayers.length; w++) {
+      var ws = webStreamPlayers[w]
+      var wsKey = playerCanonicalKey(ws)
+      if (!wsKey || seen[wsKey]) continue
+      seen[wsKey] = true
+      list.push(ws)
+    }
+
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
@@ -238,6 +331,11 @@ Item {
   function oldestPlayingPlayer(requirePlaybackStream) {
     var oldest = null
     var oldestOrder = 0
+
+    // Prefer web stream players if actively playing
+    if (webStreamPlayers.length > 0) {
+      return webStreamPlayers[0]
+    }
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
@@ -267,15 +365,16 @@ Item {
       }
     }
 
-    // 2. Currently playing MPRIS player with matching PipeWire audio stream
+    // 2. Currently playing MPRIS or Web Stream player
     var playingMprisWithStream = oldestPlayingPlayer(true)
     if (playingMprisWithStream) return playingMprisWithStream
 
-    // 3. Currently playing MPRIS player
     var playingMpris = oldestPlayingPlayer(false)
     if (playingMpris) return playingMpris
 
-    // 4. Fallbacks (first available non-proxy player with metadata)
+    // 3. Fallbacks
+    if (webStreamPlayers.length > 0) return webStreamPlayers[0]
+
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (p && !isProxyPlayer(p) && hasMetadata(p)) return p
