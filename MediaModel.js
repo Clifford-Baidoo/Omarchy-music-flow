@@ -9,26 +9,25 @@ function isProxyPlayer(player) {
 }
 
 function hasMetadata(player) {
-  if (!player) return false
-  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry || player.isStreamPlayer) return true
+  if (!player || isProxyPlayer(player)) return false
+  if (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry) return true
   if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"])) return true
   return false
 }
 
 function hasTrackMetadata(player) {
-  if (!player) return false
+  if (!player || isProxyPlayer(player)) return false
   if (player.trackTitle || player.trackArtist || player.trackAlbum || player.trackArtUrl) return true
   if (player.metadata && (player.metadata["xesam:title"] || player.metadata["xesam:artist"] || player.metadata["mpris:artUrl"])) return true
   return false
 }
 
 function playerCanControl(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious || player.isStreamPlayer))
+  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
 }
 
 function canHandleAction(player, action) {
   if (!player) return false
-  if (player.isStreamPlayer) return true
   if (action === "next") return !!player.canGoNext
   if (action === "previous") return !!player.canGoPrevious
   if (action === "play") return !!(player.canPlay || player.canTogglePlaying)
@@ -38,7 +37,7 @@ function canHandleAction(player, action) {
 }
 
 function canCycleSource(player) {
-  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay || player.isStreamPlayer))
+  return !!(player && hasMetadata(player) && (player.isPlaying || player.canPlay))
 }
 
 function nodeProps(node) {
@@ -133,7 +132,6 @@ var APP_FAMILY_MAP = {
   "chromium": ["chromium", "chrome", "google-chrome", "google-chrome-stable", "brave", "brave-browser", "edge", "microsoft-edge", "opera", "vivaldi", "electron"],
   "chrome": ["chrome", "google-chrome", "google-chrome-stable", "chromium"],
   "brave": ["brave", "brave-browser", "chromium"],
-  "seanime": ["seanime", "seanime-denshi", "seanime-server", "denshi"],
   "spotify": ["spotify", "spotify-launcher", "spotify-client"],
   "mpv": ["mpv", "mpv-mpris", "celluloid"],
   "vlc": ["vlc"]
@@ -198,7 +196,7 @@ function playerHasPlaybackStream(player, playbackStreams) {
 
 function playerKey(player) {
   if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || player.streamId || "")
+  return String(player.dbusName || player.desktopEntry || player.identity || "")
 }
 
 // Canonical unique key that groups instance duplicates (e.g. mpv and mpv.instance-XYZ -> "mpv")
@@ -240,7 +238,7 @@ function cleanTitle(rawTitle, rawArtist) {
   if (!title) return ""
 
   // 1. Remove browser / app suffixes
-  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
   // 2. Remove Anime Release Group tags: [SubsPlease], [Erai-raws], [Judas], etc.
@@ -285,7 +283,7 @@ function cleanArtist(rawArtist, rawTitle, player) {
 
   // If artist is missing, check if title had "Artist - Title"
   var title = String(rawTitle || "").trim()
-  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|Seanime|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
+  title = title.replace(/\s*[-—|•]\s*(?:Zen Browser|Mozilla Firefox|Firefox|Google Chrome|Chromium|Brave|YouTube|Twitch|SoundCloud|Spotify|Netflix|Crunchyroll|Coursera|Bandcamp|Vimeo|Reddit|Bilibili)$/i, "")
   title = title.replace(/\s*[-—|•]\s*Watch on [A-Za-z0-9 ]+$/i, "")
 
   if (title.indexOf(" - ") !== -1) {
@@ -356,34 +354,29 @@ function detectPlatform(player) {
     return { name: "SoundCloud", icon: "󰝚" }
   }
 
-  // 5. Seanime / Anime
-  if (id.indexOf("seanime") !== -1 || id.indexOf("denshi") !== -1) {
-    return { name: "Seanime", icon: "󰚩" }
-  }
-
-  // 6. Crunchyroll
+  // 5. Crunchyroll
   if (url.indexOf("crunchyroll.com") !== -1 || rawTitle.indexOf("crunchyroll") !== -1) {
     return { name: "Crunchyroll", icon: "󰚩" }
   }
 
-  // 7. Netflix
+  // 6. Netflix
   if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) {
     return { name: "Netflix", icon: "󰝆" }
   }
 
-  // 8. Bandcamp
+  // 7. Bandcamp
   if (url.indexOf("bandcamp.com") !== -1 || rawTitle.indexOf("bandcamp") !== -1) {
     return { name: "Bandcamp", icon: "󰝚" }
   }
 
-  // 9. Dedicated media players
+  // 8. Dedicated media players
   if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
   if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
   if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
   if (id.indexOf("stremio") !== -1) return { name: "Stremio", icon: "󰐹" }
   if (id.indexOf("celluloid") !== -1) return { name: "Celluloid", icon: "󰐹" }
 
-  // 10. Fallbacks to browser app names
+  // 9. Fallbacks to browser app names
   if (id.indexOf("zen") !== -1) return { name: "Zen Browser", icon: "󰈹" }
   if (id.indexOf("firefox") !== -1) return { name: "Firefox", icon: "󰈹" }
   if (id.indexOf("brave") !== -1) return { name: "Brave", icon: "󰊯" }
@@ -414,44 +407,6 @@ function osdMessage(player, fallback) {
   return label || fallback
 }
 
-function findWindowTitleForApp(appIdentifier, toplevels) {
-  if (!toplevels || toplevels.length === 0 || !appIdentifier) return ""
-  for (var i = 0; i < toplevels.length; i++) {
-    var t = toplevels[i]
-    if (!t) continue
-    var tApp = t.appId || t.waylandAppId || t.cls || t.class || ""
-    if (tApp && areAppsInSameFamily(appIdentifier, tApp)) {
-      if (t.title) return t.title
-    }
-  }
-  return ""
-}
-
-function createSeanimeStreamPlayer(node, toplevels) {
-  if (!node || isBlacklistedStream(node)) return null
-  var winTitle = findWindowTitleForApp("seanime", toplevels)
-  var title = cleanTitle(winTitle, "Seanime") || "NARUTO: Shippuuden"
-
-  return {
-    isStreamPlayer: true,
-    streamId: "seanime.desktop.player",
-    dbusName: "seanime.desktop.player",
-    identity: "Seanime",
-    desktopEntry: "seanime-denshi",
-    appName: "Seanime",
-    trackTitle: title,
-    trackArtist: "Seanime",
-    trackAlbum: "",
-    trackArtUrl: "",
-    isPlaying: true,
-    canPlay: false,
-    canPause: false,
-    canTogglePlaying: false,
-    canGoNext: false,
-    canGoPrevious: false
-  }
-}
-
 if (typeof module !== "undefined") {
   module.exports = {
     isProxyPlayer: isProxyPlayer,
@@ -480,8 +435,6 @@ if (typeof module !== "undefined") {
     sourceName: sourceName,
     sourceIcon: sourceIcon,
     labelFor: labelFor,
-    osdMessage: osdMessage,
-    findWindowTitleForApp: findWindowTitleForApp,
-    createSeanimeStreamPlayer: createSeanimeStreamPlayer
+    osdMessage: osdMessage
   }
 }

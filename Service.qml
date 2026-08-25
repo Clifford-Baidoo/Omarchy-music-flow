@@ -3,7 +3,6 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
-import Quickshell.Wayland
 import "MediaModel.js" as MediaModel
 
 Item {
@@ -17,13 +16,6 @@ Item {
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
-  readonly property var toplevels: {
-    try {
-      return ToplevelManager.toplevels ? ToplevelManager.toplevels.values : []
-    } catch (e) {
-      return []
-    }
-  }
 
   readonly property var playbackStreams: {
     var list = []
@@ -34,23 +26,10 @@ Item {
     return list
   }
 
-  // Active Seanime stream player (when running in Electron web player without MPV)
-  readonly property var seanimePlayer: {
-    for (var i = 0; i < playbackStreams.length; i++) {
-      var s = playbackStreams[i]
-      if (!s) continue
-      var sLabel = rawStreamLabel(s)
-      if (sLabel.toLowerCase().indexOf("seanime") !== -1 || (nodeProps(s)["application.process.binary"] || "").toLowerCase().indexOf("seanime") !== -1) {
-        return MediaModel.createSeanimeStreamPlayer(s, root.toplevels)
-      }
-    }
-    return null
-  }
-
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   readonly property var activePlayer: selectActivePlayer()
-  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying) || Boolean(activePlayer.isStreamPlayer))
+  readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(artist) || (activePlayer.isPlaying))
   
   readonly property string title: {
     if (!activePlayer) return ""
@@ -135,7 +114,6 @@ Item {
       var p = players[i]
       if (playerKey(p) === key || playerCanonicalKey(p) === cKey) return p
     }
-    if (seanimePlayer && (playerKey(seanimePlayer) === key || playerCanonicalKey(seanimePlayer) === cKey)) return seanimePlayer
     return null
   }
 
@@ -167,10 +145,6 @@ Item {
       }
     }
 
-    if (seanimePlayer) {
-      alive[playerCanonicalKey(seanimePlayer)] = true
-    }
-
     if (preferredPlayerKey && !alive[preferredPlayerKey]) preferredPlayerKey = ""
 
     playSerial = serial
@@ -180,7 +154,6 @@ Item {
   function orderedSourcePlayers() {
     var list = []
     var seen = {}
-    var hasMpvMpris = false
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
@@ -190,15 +163,6 @@ Item {
       seen[cKey] = true
       if (hasMetadata(p)) {
         list.push(p)
-        if (cKey.indexOf("mpv") !== -1) hasMpvMpris = true
-      }
-    }
-
-    if (seanimePlayer && !hasMpvMpris) {
-      var sKey = playerCanonicalKey(seanimePlayer)
-      if (!seen[sKey]) {
-        seen[sKey] = true
-        list.push(seanimePlayer)
       }
     }
 
@@ -217,7 +181,6 @@ Item {
   function orderedCycleSourcePlayers() {
     var list = []
     var seen = {}
-    var hasMpvMpris = false
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
@@ -227,15 +190,6 @@ Item {
       seen[cKey] = true
       if (canCycleSource(p)) {
         list.push(p)
-        if (cKey.indexOf("mpv") !== -1) hasMpvMpris = true
-      }
-    }
-
-    if (seanimePlayer && !hasMpvMpris) {
-      var sKey = playerCanonicalKey(seanimePlayer)
-      if (!seen[sKey]) {
-        seen[sKey] = true
-        list.push(seanimePlayer)
       }
     }
 
@@ -281,10 +235,7 @@ Item {
     var playingMpris = oldestPlayingPlayer(false)
     if (playingMpris) return playingMpris
 
-    // 4. Currently playing Seanime stream
-    if (seanimePlayer) return seanimePlayer
-
-    // 5. Fallbacks (first available non-proxy player with metadata)
+    // 4. Fallbacks (first available non-proxy player with metadata)
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (p && !isProxyPlayer(p) && hasMetadata(p)) return p
