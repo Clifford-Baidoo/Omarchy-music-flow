@@ -69,12 +69,38 @@ BarWidget {
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
   readonly property bool isPlaying: (activePlayer && activePlayer.isPlaying) || false
 
-  // Smooth fluid energy level (1.0 when playing, 0.18 calm ambient drift when paused)
-  readonly property real targetEnergy: isPlaying ? 1.0 : (hasMedia ? 0.18 : 0.08)
+  // Per-app volume mirrors mediaService only — the standalone fallback path (no service)
+  // has no PipeWire stream correlation available, so volume control is simply unavailable then.
+  readonly property bool hasVolumeControl: Boolean(mediaService && mediaService.hasVolumeControl)
+  readonly property real volume: hasVolumeControl ? mediaService.volume : 1.0
+  readonly property bool muted: Boolean(mediaService && mediaService.muted)
+
+  function setVolume(value) {
+    if (mediaService && typeof mediaService.setVolume === "function") mediaService.setVolume(value)
+  }
+
+  function toggleMute() {
+    if (mediaService && typeof mediaService.toggleMute === "function") mediaService.toggleMute()
+  }
+
+  // While playing, drive amplitude from the active player's real PipeWire peak level
+  // (mediaService.audioLevel) so all visualizer modes react to actual loudness instead of
+  // a constant. Falls back to the old fixed energy when no stream could be correlated to
+  // the player (mediaService.hasVolumeControl is false in that case too, since both
+  // features key off the same correlated node). Paused/idle keep the ambient drift levels.
+  property real audioGain: 2.4
+  property real audioFloor: 0.15
+  readonly property real liveAudioLevel: (mediaService && mediaService.audioLevel) || 0
+  readonly property bool hasLiveAudioLevel: Boolean(mediaService && mediaService.hasVolumeControl)
+  readonly property real targetEnergy: {
+    if (!isPlaying) return hasMedia ? 0.18 : 0.08
+    if (!hasLiveAudioLevel) return 1.0
+    return Math.max(audioFloor, Math.min(1.0, liveAudioLevel * audioGain))
+  }
   property real currentEnergy: targetEnergy
 
   Behavior on currentEnergy {
-    NumberAnimation { duration: 550; easing.type: Easing.OutQuad }
+    NumberAnimation { duration: 160; easing.type: Easing.OutQuad }
   }
 
   readonly property bool hasMedia: activePlayer !== null && (Boolean(title) || Boolean(isPlaying) || Boolean(activePlayer.trackTitle || activePlayer.trackArtist))
@@ -231,7 +257,7 @@ BarWidget {
       : (root.showText ? (flowRow.implicitWidth + Style.space(16)) : Style.space(110))
     radius: height / 2
     clip: true
-    color: clickArea.containsMouse ? Style.tint(root.bar ? root.bar.barForeground : Color.foreground, 0.05) : "transparent"
+    color: clickArea.containsMouse ? Util.alpha(root.bar ? root.bar.barForeground : Color.foreground, 0.05) : "transparent"
     borderSpec: Border.none()
 
     Behavior on width {
@@ -280,7 +306,7 @@ BarWidget {
           var amp = height * (0.06 + energy * (0.22 + intensity * 0.15))
 
           ctx.lineWidth = 1.2 + bassPulse * 0.8
-          ctx.strokeStyle = energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)
+          ctx.strokeStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
           ctx.beginPath()
           for (var x = 0; x <= width; x += 3) {
             var k = (x / width) * Math.PI * 4
@@ -307,7 +333,7 @@ BarWidget {
           var numBars = root.showText ? 16 : 22
           var barW = (width / numBars) * 0.45
           var gap = (width / numBars) * 0.55
-          ctx.fillStyle = energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)
+          ctx.fillStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
           for (var b = 0; b < numBars; b++) {
             var barFreq = Math.abs(Math.sin(phase * 2.0 + b * 0.75) * Math.cos(phase * 1.2 + b * 0.35))
             var bh = (barFreq * (height * (0.15 + energy * (0.3 + intensity * 0.35))) + 2)
@@ -319,7 +345,7 @@ BarWidget {
           // 3. PULSING WAVE MATRIX BEADS
           var numDots = root.showText ? 14 : 18
           var step = width / (numDots + 1)
-          ctx.fillStyle = energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)
+          ctx.fillStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
           for (var d = 1; d <= numDots; d++) {
             var dx = d * step
             var dotOsc = Math.sin(phase * 2.0 + d * 0.6)
@@ -336,7 +362,7 @@ BarWidget {
             var speed = 20 + energy * 20 + bassPulse * 10
             var px = ((pIdx * 28 + (phase / (Math.PI * 2)) * width * (0.6 + energy * 0.6)) % width)
             var py = midY + Math.sin(px * 0.08 + phase + pIdx) * (height * (0.08 + energy * (0.2 + intensity * 0.15)))
-            ctx.fillStyle = (pIdx % 2 === 0) ? (energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.4)) : (root.bar ? root.bar.barForeground : Color.foreground)
+            ctx.fillStyle = (pIdx % 2 === 0) ? (energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)) : (root.bar ? root.bar.barForeground : Color.foreground)
             ctx.beginPath()
             ctx.arc(px, py, 1.4 + energy * 0.8 + bassPulse * 0.6, 0, Math.PI * 2)
             ctx.fill()
@@ -345,7 +371,7 @@ BarWidget {
           // 5. RHYTHMIC BREATHING AUDIO HEARTBEAT
           var pulseScale = 0.25 + energy * (0.35 + intensity * 0.4)
           var grad = ctx.createRadialGradient(width / 2, midY, 2, width / 2, midY, (width / 2) * pulseScale)
-          grad.addColorStop(0, energy > 0.4 ? Color.accent : Style.tint(Color.accent, 0.3))
+          grad.addColorStop(0, energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.3))
           grad.addColorStop(1, "transparent")
           ctx.fillStyle = grad
           ctx.fillRect(0, 0, width, height)
@@ -549,7 +575,7 @@ BarWidget {
           width: Style.space(72)
           height: Style.space(72)
           radius: Style.spacing.labelGap
-          color: Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.08)
+          color: Util.alpha(root.bar ? root.bar.foreground : Color.foreground, 0.08)
           borderSpec: Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
 
           Image {
@@ -674,6 +700,48 @@ BarWidget {
         }
       }
 
+      // Per-Source Volume (the PipeWire stream correlated to the active player)
+      Row {
+        width: parent.width
+        spacing: Style.space(8)
+        visible: root.hasVolumeControl
+
+        Text {
+          id: volumeIcon
+          text: root.muted ? "󰝟" : (root.volume > 0.5 ? "󰕾" : (root.volume > 0 ? "󰖀" : "󰕿"))
+          textFormat: Text.PlainText
+          color: volumeIconMouse.containsMouse ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.body
+          anchors.verticalCenter: parent.verticalCenter
+
+          Behavior on color { ColorAnimation { duration: 140 } }
+
+          MouseArea {
+            id: volumeIconMouse
+            anchors.fill: parent
+            anchors.margins: -Style.space(4)
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.toggleMute()
+          }
+        }
+
+        PanelSlider {
+          id: volumeSlider
+          bar: root.bar
+          width: parent.width - volumeIcon.width - Style.space(8)
+          minimum: 0
+          maximum: 1
+          step: 0.05
+          value: root.muted ? 0 : root.volume
+          anchors.verticalCenter: parent.verticalCenter
+          onMoved: function(v) { root.setVolume(v) }
+          onReleased: function(v) { root.setVolume(v) }
+          onRightClicked: root.toggleMute()
+        }
+      }
+
       // Visualizer Flow & Text Visibility Switcher
       Column {
         width: parent.width
@@ -698,13 +766,18 @@ BarWidget {
                 id: flowBtn
                 required property var modelData
                 readonly property bool isSelected: root.visualizerMode === modelData.id
+                // Repeater delegates can be created while the mouse cursor already sits over
+                // their pre-layout position, which seeds MouseArea.containsMouse to true before
+                // any real enter event fires. Track hover via onEntered/onExited instead so idle
+                // buttons never start out looking hovered.
+                property bool hovered: false
 
                 width: Style.space(48)
                 height: Style.space(24)
                 radius: Style.spacing.labelGap
                 color: isSelected
                   ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
-                  : (flowMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
+                  : (flowBtn.hovered ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Util.alpha(root.bar ? root.bar.foreground : Color.foreground, 0.04))
                 borderSpec: isSelected
                   ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
                   : Border.none()
@@ -736,6 +809,8 @@ BarWidget {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
+                  onEntered: flowBtn.hovered = true
+                  onExited: flowBtn.hovered = false
                   onClicked: {
                     root.visualizerMode = flowBtn.modelData.id
                     waveCanvas.requestPaint()
@@ -753,7 +828,7 @@ BarWidget {
             radius: Style.spacing.labelGap
             color: root.showText
               ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
-              : (textToggleMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
+              : (textToggleMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Util.alpha(root.bar ? root.bar.foreground : Color.foreground, 0.04))
             borderSpec: root.showText
               ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
               : Border.none()
@@ -861,16 +936,18 @@ BarWidget {
               var a = player.trackArtist || (player.metadata && player.metadata["xesam:artist"]) || ""
               return MediaModel.cleanArtist(a, t, player)
             }
+            // Same Repeater-delegate stale-hover issue as the flow-mode buttons above.
+            property bool hovered: false
 
             width: parent.width
             height: Style.space(42)
             radius: Style.spacing.labelGap
             color: selected
               ? Style.selectedFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent)
-              : (sourceCardMouse.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Style.tint(root.bar ? root.bar.foreground : Color.foreground, 0.04))
+              : (sourceRow.hovered ? Style.hoverFillFor(root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Util.alpha(root.bar ? root.bar.foreground : Color.foreground, 0.04))
             borderSpec: selected
               ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
-              : (sourceCardMouse.containsMouse ? Border.controlSpec("hover-cursor", root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Border.none())
+              : (sourceRow.hovered ? Border.controlSpec("hover-cursor", root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Border.none())
 
             Row {
               anchors.left: parent.left
@@ -931,6 +1008,8 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
+              onEntered: sourceRow.hovered = true
+              onExited: sourceRow.hovered = false
               onClicked: root.selectPlayer(sourceRow.player)
             }
           }

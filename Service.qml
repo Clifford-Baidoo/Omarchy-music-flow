@@ -30,6 +30,42 @@ Item {
     return list
   }
 
+  // Per-app volume: the PipeWire stream node correlated to the active player, if any.
+  readonly property var activePlayerStream: activePlayer ? MediaModel.findPlayerStream(activePlayer, playbackStreams) : null
+  readonly property bool hasVolumeControl: activePlayerStream !== null && activePlayerStream.audio !== null
+  readonly property real volume: hasVolumeControl ? activePlayerStream.audio.volume : 1.0
+  readonly property bool muted: hasVolumeControl ? activePlayerStream.audio.muted : false
+
+  function setVolume(value) {
+    if (!hasVolumeControl) return false
+    if (typeof value !== "number" || !isFinite(value)) return false
+    activePlayerStream.audio.volume = Math.max(0, Math.min(1, value))
+    return true
+  }
+
+  function adjustVolume(delta) {
+    if (!hasVolumeControl) return false
+    return setVolume(activePlayerStream.audio.volume + delta)
+  }
+
+  function toggleMute() {
+    if (!hasVolumeControl) return false
+    activePlayerStream.audio.muted = !activePlayerStream.audio.muted
+    return true
+  }
+
+  // Live audio level for the active player's own stream, so the bar visualizer's
+  // amplitude tracks real loudness instead of a synthetic pulse. Shares the same
+  // correlated node as volume control above, so it's only available when
+  // hasVolumeControl is also true.
+  PwNodePeakMonitor {
+    id: peakMonitor
+    node: root.activePlayerStream
+    enabled: root.activePlayerStream !== null
+  }
+
+  readonly property real audioLevel: peakMonitor.enabled ? Math.max(0, Math.min(1, peakMonitor.peak)) : 0
+
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   // playerStartedAt changes every time syncPlayingOrder() runs (it writes playerStartedAt = next).
@@ -627,6 +663,9 @@ Item {
       artist: finalArtist,
       album: finalAlbum,
       artUrl: root.artUrl,
+      hasVolumeControl: root.hasVolumeControl,
+      volume: root.volume,
+      muted: root.muted,
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,
       canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false
@@ -675,6 +714,22 @@ Item {
 
     function sourceSwitchPrevious(): string {
       return root.switchSource(-1, true, true) ? "ok" : "unhandled"
+    }
+
+    function volumeUp(): string {
+      return root.adjustVolume(0.05) ? "ok" : "unhandled"
+    }
+
+    function volumeDown(): string {
+      return root.adjustVolume(-0.05) ? "ok" : "unhandled"
+    }
+
+    function setVolume(value: real): string {
+      return root.setVolume(value) ? "ok" : "unhandled"
+    }
+
+    function toggleMute(): string {
+      return root.toggleMute() ? "ok" : "unhandled"
     }
 
     function ping(): string {

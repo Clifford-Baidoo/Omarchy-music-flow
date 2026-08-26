@@ -194,6 +194,42 @@ function playerHasPlaybackStream(player, playbackStreams) {
   return false
 }
 
+// Resolves the single PipeWire stream node that corresponds to a player, for volume
+// control. Reuses the same label/family matching heuristics as playerHasPlaybackStream,
+// preferring an actively unmuted/uncorked match over a corked/muted one.
+function findPlayerStream(player, playbackStreams) {
+  if (!player) return null
+  var pLabel = playerAppLabel(player)
+  var pKey = streamLabelKey(pLabel)
+  var pDbus = String(player.dbusName || "")
+
+  var streams = Array.isArray(playbackStreams) ? playbackStreams : []
+  var fallback = null
+
+  for (var i = 0; i < streams.length; i++) {
+    var sNode = streams[i]
+    if (!sNode) continue
+    var sLabel = rawStreamLabel(sNode)
+    var sKey = streamLabelKey(sLabel)
+    var p = nodeProps(sNode)
+    var binary = String(p["application.process.binary"] || "")
+
+    var matches = (sKey && (sKey === pKey || sKey.indexOf(pKey) !== -1 || pKey.indexOf(sKey) !== -1))
+      || areAppsInSameFamily(pLabel, sLabel)
+      || areAppsInSameFamily(pDbus, sLabel)
+      || (binary && (areAppsInSameFamily(pLabel, binary) || areAppsInSameFamily(pDbus, binary)))
+
+    if (!matches) continue
+
+    var isCorked = p["pulse.corked"] === "true" || p["pulse.corked"] === true
+    var isMuted = sNode.audio && sNode.audio.muted
+    if (!isCorked && !isMuted) return sNode
+    if (!fallback) fallback = sNode
+  }
+
+  return fallback
+}
+
 function playerHasActiveStream(player, playbackStreams) {
   if (!player) return false
   var pLabel = playerAppLabel(player)
@@ -706,6 +742,7 @@ if (typeof module !== "undefined") {
     playerAppLabel: playerAppLabel,
     playerHasPlaybackStream: playerHasPlaybackStream,
     playerHasActiveStream: playerHasActiveStream,
+    findPlayerStream: findPlayerStream,
     playerKey: playerKey,
     playerCanonicalKey: playerCanonicalKey,
     trackSignature: trackSignature,
