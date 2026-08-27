@@ -64,12 +64,51 @@ echo -e "${BLUE}==>${NC} Configuring status bar layout in ~/.config/omarchy/shel
 PLUGIN_ID="${PLUGIN_ID}" STOCK_PLUGIN_ID="${STOCK_PLUGIN_ID}" \
 BAR_SECTION="${BAR_SECTION}" BAR_ANCHOR_ID="${BAR_ANCHOR_ID}" \
 python3 - << 'PYEOF'
-import json, os
+import json, os, stat, tempfile
 
 plugin_id = os.environ["PLUGIN_ID"]
 stock_plugin_id = os.environ["STOCK_PLUGIN_ID"]
 section = os.environ["BAR_SECTION"]
 anchor_id = os.environ["BAR_ANCHOR_ID"]
+
+
+def _open_no_follow(path):
+    # O_NOFOLLOW rejects a symlinked config file outright instead of
+    # transparently following it, so there's no check-then-open window
+    # between an isfile() check and the actual read for a same-user process
+    # to swap a symlink into.
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    return os.fdopen(fd, "r")
+
+
+def _atomic_write_json(path, data):
+    # tempfile.mkstemp creates the temp file with O_CREAT|O_EXCL in one
+    # syscall (mode 0600, unpredictable random suffix) in the *same*
+    # directory as the target - no predictable ".tmp" name and no separate
+    # check-then-open window for another same-user process to pre-plant a
+    # symlink there and redirect this write into an arbitrary file. fsync
+    # before the rename so a crash immediately after writing can't lose the
+    # data; os.replace is still the atomic swap into the final path.
+    directory = os.path.dirname(path) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".shell.json.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            try:
+                mode = stat.S_IMODE(os.stat(path).st_mode)
+                os.fchmod(f.fileno(), mode)
+            except FileNotFoundError:
+                pass
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
 
 config_path = os.path.expanduser("~/.config/omarchy/shell.json")
 default_paths = [
@@ -81,7 +120,7 @@ default_paths = [
 config = None
 if os.path.isfile(config_path):
     try:
-        with open(config_path, "r") as f:
+        with _open_no_follow(config_path) as f:
             config = json.load(f)
     except Exception:
         pass
@@ -90,7 +129,7 @@ if not config:
     for dp in default_paths:
         if dp and os.path.isfile(dp):
             try:
-                with open(dp, "r") as f:
+                with _open_no_follow(dp) as f:
                     config = json.load(f)
                     break
             except Exception:
@@ -141,13 +180,7 @@ if stock_plugin_id not in disabled:
     disabled.append(stock_plugin_id)
 
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
-# Write atomically (temp file + rename) so a crash or power loss mid-write
-# can't leave the user's entire shell.json - not just this plugin's entry -
-# truncated or corrupted.
-tmp_path = config_path + ".tmp"
-with open(tmp_path, "w") as f:
-    json.dump(config, f, indent=2)
-os.replace(tmp_path, config_path)
+_atomic_write_json(config_path, config)
 
 print(f"Status bar layout updated: {plugin_id} successfully registered in shell.json.")
 PYEOF

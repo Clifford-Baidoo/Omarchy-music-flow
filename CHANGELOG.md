@@ -28,6 +28,40 @@
   all rejected; 60 iterations of a tight regular-file/FIFO swap race produced
   zero hangs (previously hung reliably within 5-6 iterations).
 
+- **Fixed a symlink race in `shell.json` writes** (`install.sh`, `uninstall.sh`,
+  `update.sh`). The atomic-write fix from the previous round used a
+  predictable temp path (`shell.json.tmp`) opened with plain `open(path,
+  "w")`, which creates-or-truncates whatever is at that path — including a
+  symlink. A same-user process could pre-plant a symlink at that exact path
+  pointing at any file the user owns, and the next install/uninstall/update
+  run would silently overwrite it via `os.replace`. Separately, the read
+  side had the same shape of bug: `shell.json` was opened by plain pathname
+  after an `isfile()` check, so a same-user process could swap in a symlink
+  between the check and the open and have its target read and later
+  overwritten as if it were `shell.json`.
+  - Writes now go through `tempfile.mkstemp()` in `shell.json`'s own
+    directory, which creates the temp file with `O_CREAT | O_EXCL` in a
+    single syscall — an unpredictable name, and no separate check-then-open
+    window for a symlink to be planted into. The write is `fsync`'d before
+    the atomic `os.replace` swap, and the temp file's mode is set to match
+    the original `shell.json` (mkstemp defaults to 0600, which would
+    otherwise silently tighten the config's permissions on every run).
+  - Reads now open `shell.json` with `O_NOFOLLOW`, so a symlinked config is
+    rejected outright (the script aborts loudly) instead of being
+    transparently followed and then overwritten. This is a deliberate
+    behavior change: a legitimately symlinked `shell.json` (e.g. managed by
+    a dotfiles tool) will now cause install/update/uninstall to abort rather
+    than edit through the link.
+  - Verified with a live regression test: normal runs still write correctly
+    and preserve the original file's permission bits with no leftover temp
+    files; a `shell.json` symlinked to an out-of-tree "victim" file is
+    rejected (`ELOOP`) before any write is attempted, leaving the victim
+    file byte-for-byte untouched.
+  - Follow-up hardening: the temp file's permissions are now set with
+    `os.fchmod` on the still-open file descriptor instead of `os.chmod` on
+    the path after closing it, removing a narrow path-based window between
+    fd-close and the permission set / rename.
+
 ### Reliability
 
 - **`uninstall.sh` and `update.sh` no longer swallow `shell.json` mutation
