@@ -119,7 +119,34 @@ def _open_no_follow(path, max_bytes=2 * 1024 * 1024):
     except BaseException:
         os.close(fd)
         raise
-    return os.fdopen(fd, "r")
+    return fd
+
+
+def _read_json_no_follow(path, max_bytes=2 * 1024 * 1024):
+    # The fstat-based size check in _open_no_follow only holds at the instant
+    # it runs. The fd stays open on the same regular file afterward (not a
+    # private copy), so a same-user process can still append to it and grow
+    # it past max_bytes before the read finishes; json.load() has no byte
+    # limit of its own and would read straight to EOF. Read at most
+    # max_bytes + 1 bytes directly from the validated fd instead, so an
+    # oversized concurrent grow is caught by the read loop rather than
+    # trusted to a stale size check, then parse only that bounded buffer.
+    fd = _open_no_follow(path, max_bytes)
+    try:
+        limit = max_bytes + 1
+        chunks = []
+        total = 0
+        while total < limit:
+            chunk = os.read(fd, min(65536, limit - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        if total > max_bytes:
+            raise OSError(f"refusing to read oversized config at {path} (>{max_bytes} bytes)")
+    finally:
+        os.close(fd)
+    return json.loads(b"".join(chunks))
 
 
 def _atomic_write_json(path, data):
@@ -161,8 +188,7 @@ default_paths = [
 config = None
 if os.path.isfile(config_path):
     try:
-        with _open_no_follow(config_path) as f:
-            config = json.load(f)
+        config = _read_json_no_follow(config_path)
     except Exception:
         pass
 
@@ -170,9 +196,8 @@ if not config:
     for dp in default_paths:
         if dp and os.path.isfile(dp):
             try:
-                with _open_no_follow(dp) as f:
-                    config = json.load(f)
-                    break
+                config = _read_json_no_follow(dp)
+                break
             except Exception:
                 pass
 

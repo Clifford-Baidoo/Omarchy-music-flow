@@ -74,6 +74,19 @@
     regression test: 300 iterations of a tight regular-file/FIFO swap race
     against the fixed open path produced zero hangs, and an oversized
     planted file is rejected before `json.load()` ever runs.
+  - Follow-up fix: the `fstat`-based size check above only holds at the
+    instant it runs — the fd stays open on the same (mutable) regular file
+    afterward, so a same-user process could still grow it past the 2 MiB
+    bound after the check passed but before `json.load()`, which has no
+    byte limit of its own and reads straight to EOF. Replaced the
+    `json.load(f)` call with a bounded read loop (`os.read()` on the
+    validated fd, capped at `max_bytes + 1`) that raises before parsing if
+    it ever reads past the limit, then parses only that bounded in-memory
+    buffer via `json.loads()`. Verified with a deterministic (non-racy)
+    reproduction: manually interleaving the exact open→fstat→grow→read
+    steps confirmed the old `json.load()` path silently parsed a file grown
+    past its checked cap, while the new read loop detects the same
+    post-check growth and raises before parsing.
 
 - **Fixed a deterministic (non-racy) symlink-overwrite in plugin file
   installation** (`install.sh`, `update.sh`). Both scripts copied plugin
