@@ -32,10 +32,36 @@ echo -e "${BLUE}==>${NC} Installing ${GREEN}Omarchy Music Flow${NC} [${PLUGIN_ID
 mkdir -p "${TARGET_DIR}"
 
 # 2. Copy all required plugin files
-cp -f "${SCRIPT_DIR}/BarWidget.qml" "${TARGET_DIR}/"
-cp -f "${SCRIPT_DIR}/Service.qml" "${TARGET_DIR}/"
-cp -f "${SCRIPT_DIR}/MediaModel.js" "${TARGET_DIR}/"
-cp -f "${SCRIPT_DIR}/manifest.json" "${TARGET_DIR}/"
+#
+# Routed through a fresh mktemp name + mv instead of `cp -f src dest`
+# directly: `cp -f` follows a symlink at the destination and overwrites
+# whatever it points to (verified), so a same-user process that plants one
+# at e.g. TARGET_DIR/BarWidget.qml once would get it silently and
+# deterministically corrupted, no race required, on every install. `mv`
+# (rename) never follows a symlink at the destination - it replaces the
+# directory entry itself - so landing the new content there first and
+# swapping it into place closes this off.
+PLUGIN_TMP_FILES=()
+cleanup_plugin_tmp_files() {
+    local f
+    for f in "${PLUGIN_TMP_FILES[@]:-}"; do
+        [ -n "${f}" ] && rm -f "${f}"
+    done
+}
+trap cleanup_plugin_tmp_files EXIT
+
+install_plugin_file() {
+    local src="$1" name="$2" tmp
+    tmp=$(mktemp -p "${TARGET_DIR}" ".${name}.XXXXXX")
+    PLUGIN_TMP_FILES+=("${tmp}")
+    cp -f "${src}" "${tmp}"
+    chmod --reference="${src}" "${tmp}"
+    mv -f "${tmp}" "${TARGET_DIR}/${name}"
+}
+install_plugin_file "${SCRIPT_DIR}/BarWidget.qml" "BarWidget.qml"
+install_plugin_file "${SCRIPT_DIR}/Service.qml" "Service.qml"
+install_plugin_file "${SCRIPT_DIR}/MediaModel.js" "MediaModel.js"
+install_plugin_file "${SCRIPT_DIR}/manifest.json" "manifest.json"
 
 echo -e "${BLUE}==>${NC} Plugin files installed to: ${TARGET_DIR}"
 
@@ -72,12 +98,27 @@ section = os.environ["BAR_SECTION"]
 anchor_id = os.environ["BAR_ANCHOR_ID"]
 
 
-def _open_no_follow(path):
+def _open_no_follow(path, max_bytes=2 * 1024 * 1024):
     # O_NOFOLLOW rejects a symlinked config file outright instead of
     # transparently following it, so there's no check-then-open window
     # between an isfile() check and the actual read for a same-user process
-    # to swap a symlink into.
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    # to swap a symlink into. O_NONBLOCK stops a planted FIFO from blocking
+    # open() indefinitely - the same failure mode already fixed in the
+    # artwork-fetch path (Service.qml/BarWidget.qml); it's a no-op for the
+    # regular file this is required to be. After opening, fstat the fd (not
+    # the path, which could have changed again) to reject anything that
+    # isn't a bounded-size regular file before it's ever handed to
+    # json.load().
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"refusing to read non-regular file at {path}")
+        if st.st_size > max_bytes:
+            raise OSError(f"refusing to read oversized config at {path} ({st.st_size} bytes)")
+    except BaseException:
+        os.close(fd)
+        raise
     return os.fdopen(fd, "r")
 
 

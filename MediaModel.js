@@ -294,11 +294,23 @@ function trackChanged(previousSignature, player) {
 // Text & Security Sanitization
 // ------------------------------------------------------------------------------
 
+var MAX_TEXT_LENGTH = 4096
+
+// Bounds worst-case CPU/memory from attacker-controlled MPRIS metadata text
+// (xesam:title, xesam:url, etc. have no length cap in the MPRIS/D-Bus spec,
+// unlike bus names) before it's run through the regex cascades below and in
+// cleanTitle/detectPlatform.
+function capText(raw, maxLen) {
+  var s = (raw === null || raw === undefined) ? "" : String(raw)
+  var limit = maxLen || MAX_TEXT_LENGTH
+  return s.length > limit ? s.slice(0, limit) : s
+}
+
 // Strips HTML/XML markup, scripts, control characters, and angle brackets so
 // strings are guaranteed safe when rendered in Text sinks (PlainText or AutoText)
 function sanitizeText(raw) {
   if (raw === null || raw === undefined) return ""
-  var text = String(raw)
+  var text = capText(raw)
   if (!text) return ""
 
   // 1. Remove script, style, and iframe blocks including contents
@@ -628,7 +640,7 @@ function extractArtUrl(player) {
     if (candidate) return candidate
   }
 
-  var url = String(meta["xesam:url"] || player.url || "")
+  var url = capText(meta["xesam:url"] || player.url, MAX_URL_LENGTH)
   if (url) {
     var ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
     if (ytMatch && ytMatch[1]) {
@@ -644,10 +656,10 @@ function detectPlatform(player) {
   if (!player) return { name: "Media", icon: "󰝚" }
 
   var meta = (player && player.metadata) ? player.metadata : {}
-  var url = String(meta["xesam:url"] || player.url || "").toLowerCase()
-  var rawTitle = String(player.trackTitle || meta["xesam:title"] || "").toLowerCase()
-  var artUrl = String(player.trackArtUrl || meta["mpris:artUrl"] || meta["xesam:artUrl"] || "").toLowerCase()
-  var id = String(player.identity || player.desktopEntry || player.dbusName || player.appName || "").toLowerCase()
+  var url = capText(meta["xesam:url"] || player.url, MAX_URL_LENGTH).toLowerCase()
+  var rawTitle = capText(player.trackTitle || meta["xesam:title"]).toLowerCase()
+  var artUrl = capText(player.trackArtUrl || meta["mpris:artUrl"] || meta["xesam:artUrl"], MAX_URL_LENGTH).toLowerCase()
+  var id = capText(player.identity || player.desktopEntry || player.dbusName || player.appName).toLowerCase()
 
   // 1. Spotify
   if (id.indexOf("spotify") !== -1 || url.indexOf("spotify.com") !== -1) {

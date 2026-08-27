@@ -41,12 +41,27 @@ section = os.environ["BAR_SECTION"]
 anchor_id = os.environ["BAR_ANCHOR_ID"]
 
 
-def _open_no_follow(path):
+def _open_no_follow(path, max_bytes=2 * 1024 * 1024):
     # O_NOFOLLOW rejects a symlinked config file outright instead of
     # transparently following it, so there's no check-then-open window
     # between the isfile() check below and the actual read for a same-user
-    # process to swap a symlink into.
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    # process to swap a symlink into. O_NONBLOCK stops a planted FIFO from
+    # blocking open() indefinitely - the same failure mode already fixed in
+    # the artwork-fetch path (Service.qml/BarWidget.qml); it's a no-op for
+    # the regular file this is required to be. After opening, fstat the fd
+    # (not the path, which could have changed again) to reject anything
+    # that isn't a bounded-size regular file before it's ever handed to
+    # json.load().
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"refusing to read non-regular file at {path}")
+        if st.st_size > max_bytes:
+            raise OSError(f"refusing to read oversized config at {path} ({st.st_size} bytes)")
+    except BaseException:
+        os.close(fd)
+        raise
     return os.fdopen(fd, "r")
 
 

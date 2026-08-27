@@ -61,6 +61,73 @@
     `os.fchmod` on the still-open file descriptor instead of `os.chmod` on
     the path after closing it, removing a narrow path-based window between
     fd-close and the permission set / rename.
+  - Follow-up fix: `_open_no_follow()` opened `shell.json` with
+    `O_NOFOLLOW` but not `O_NONBLOCK`, and never validated the resulting
+    descriptor before handing it to `json.load()`. A same-user process
+    could win the same check-then-open race already closed for symlinks by
+    swapping in a FIFO instead, blocking the open indefinitely (the exact
+    failure mode already fixed once in the artwork-fetch path); a swapped-in
+    oversized regular file would also have been parsed with no size bound.
+    Added `O_NONBLOCK` (a no-op for the regular file this is required to
+    be) plus an `fstat`-on-the-fd check that rejects anything that isn't a
+    regular file under 2 MiB before it's read. Verified with a live
+    regression test: 300 iterations of a tight regular-file/FIFO swap race
+    against the fixed open path produced zero hangs, and an oversized
+    planted file is rejected before `json.load()` ever runs.
+
+- **Fixed a deterministic (non-racy) symlink-overwrite in plugin file
+  installation** (`install.sh`, `update.sh`). Both scripts copied plugin
+  files straight onto their final names with `cp -f "$SRC" "$TARGET_DIR/"`.
+  `cp -f` follows a symlink at the destination and overwrites whatever it
+  points to, leaving the symlink itself in place (verified empirically). A
+  same-user process only had to plant a symlink once at, say,
+  `TARGET_DIR/BarWidget.qml` pointing at any file the user owns — no race
+  window needed — and the next install or update would silently overwrite
+  that file's contents with QML source. Fixed by copying each file to a
+  fresh `mktemp`-generated name in the same directory first, then `mv`ing
+  it onto the final filename: `mv` (`rename()`) never follows a symlink at
+  the destination, it replaces the directory entry itself, so this closes
+  the hole regardless of what currently occupies that name. Verified live:
+  normal installs still produce correct regular files with source
+  permissions preserved; a symlink planted at a plugin filename before
+  running install/update now leaves the linked file completely untouched
+  and the plugin directory ends up with a genuine regular file in its
+  place. (`ln -sf`, used for the MPV MPRIS integration symlink, was
+  checked and does not have this problem — it replaces the link entry
+  rather than writing through it.)
+
+### Reliability
+
+- **`install.sh` / `update.sh` no longer leak temp files on a mid-copy
+  failure.** `install_plugin_file()`'s `mktemp`-then-`mv` sequence (added
+  above) had no cleanup if `cp` or `chmod` failed after the temp file was
+  already created (e.g. a missing source file, a full disk) - the orphaned
+  `.<name>.XXXXXX` file was left in the plugin directory permanently.
+  Reproduced (a simulated failure on the 3rd of 4 files left a dotfile
+  behind) and fixed with a script-wide `EXIT` trap that removes any
+  temp file that didn't make it to a successful `mv`, mirroring the
+  `trap 'rm -f "$TMP_FILE"' EXIT` pattern already used in the artwork-fetch
+  script. Verified the same failure injection now leaves zero stray files.
+
+- **Bounded worst-case CPU/memory from unbounded MPRIS metadata text**
+  (`MediaModel.js`). `sanitizeText`, `cleanTitle`, `detectPlatform`, and
+  `extractArtUrl` ran their regex/string-scan cascades over raw
+  `xesam:title` / `xesam:url` / `trackArtUrl` text with no length cap -
+  unlike this same file's URL and data-URI validators, which already bound
+  input to `MAX_URL_LENGTH` / `MAX_DATA_IMAGE_LENGTH`. Unlike D-Bus bus
+  names (spec-capped at 255 bytes), MPRIS metadata *values* have no size
+  limit, so a same-user malicious MPRIS player (or a webpage feeding an
+  oversized `document.title` through a browser's media-session
+  integration) could set a multi-megabyte title, re-processed in full on
+  every metadata change. Measured on the pre-fix code: a 20 MB attacker
+  title took 234ms per change and was retained in memory at full size;
+  D-Bus allows messages up to ~128MB, so cost scales with whatever the
+  attacker sends. Added a `capText()` helper (reusing the same
+  `MAX_URL_LENGTH` for URL-shaped fields, a new 4096-char `MAX_TEXT_LENGTH`
+  for freeform text) applied at the entry points that read raw metadata.
+  Verified: normal titles/URLs clean identically to before; the same 20MB
+  payload now processes in single-digit milliseconds with output bounded
+  to 4096 chars.
 
 ### Reliability
 
