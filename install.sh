@@ -141,8 +141,13 @@ if stock_plugin_id not in disabled:
     disabled.append(stock_plugin_id)
 
 os.makedirs(os.path.dirname(config_path), exist_ok=True)
-with open(config_path, "w") as f:
+# Write atomically (temp file + rename) so a crash or power loss mid-write
+# can't leave the user's entire shell.json - not just this plugin's entry -
+# truncated or corrupted.
+tmp_path = config_path + ".tmp"
+with open(tmp_path, "w") as f:
     json.dump(config, f, indent=2)
+os.replace(tmp_path, config_path)
 
 print(f"Status bar layout updated: {plugin_id} successfully registered in shell.json.")
 PYEOF

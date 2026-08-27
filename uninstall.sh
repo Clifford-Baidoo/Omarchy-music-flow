@@ -42,38 +42,45 @@ anchor_id = os.environ["BAR_ANCHOR_ID"]
 
 config_path = os.path.expanduser("~/.config/omarchy/shell.json")
 if os.path.isfile(config_path):
-    try:
-        with open(config_path, "r") as f:
-            config = json.load(f)
+    # No blanket try/except here on purpose: a swallowed failure would let this
+    # script print "Uninstall complete! Restored default media widget." even
+    # when shell.json was left untouched - exactly the silent-success bug this
+    # plugin's install/uninstall flow has already been bitten by once. Let a
+    # genuine failure (corrupt JSON, permission denied) abort loudly instead.
+    with open(config_path, "r") as f:
+        config = json.load(f)
 
-        layout = config.get("bar", {}).get("layout", {})
-        for sec in ["left", "center", "right"]:
-            if sec in layout and isinstance(layout[sec], list):
-                layout[sec] = [item for item in layout[sec] if not (isinstance(item, dict) and item.get("id") == plugin_id)]
+    layout = config.get("bar", {}).get("layout", {})
+    for sec in ["left", "center", "right"]:
+        if sec in layout and isinstance(layout[sec], list):
+            layout[sec] = [item for item in layout[sec] if not (isinstance(item, dict) and item.get("id") == plugin_id)]
 
-        # A bar-widget's "enabled" state is derived from its presence in the
-        # layout, not from disabledPlugins - so removing custom.media without
-        # putting the stock widget back left the user with no media widget
-        # at all, despite disabledPlugins being cleared.
-        target = layout.setdefault(section, [])
-        if not any(isinstance(item, dict) and item.get("id") == stock_plugin_id for item in target):
-            inserted = False
-            for i, item in enumerate(target):
-                if isinstance(item, dict) and item.get("id") == anchor_id:
-                    target.insert(i + 1, {"id": stock_plugin_id})
-                    inserted = True
-                    break
-            if not inserted:
-                target.append({"id": stock_plugin_id})
+    # A bar-widget's "enabled" state is derived from its presence in the
+    # layout, not from disabledPlugins - so removing custom.media without
+    # putting the stock widget back left the user with no media widget
+    # at all, despite disabledPlugins being cleared.
+    target = layout.setdefault(section, [])
+    if not any(isinstance(item, dict) and item.get("id") == stock_plugin_id for item in target):
+        inserted = False
+        for i, item in enumerate(target):
+            if isinstance(item, dict) and item.get("id") == anchor_id:
+                target.insert(i + 1, {"id": stock_plugin_id})
+                inserted = True
+                break
+        if not inserted:
+            target.append({"id": stock_plugin_id})
 
-        disabled = config.get("disabledPlugins", [])
-        if stock_plugin_id in disabled:
-            disabled.remove(stock_plugin_id)
+    disabled = config.get("disabledPlugins", [])
+    if stock_plugin_id in disabled:
+        disabled.remove(stock_plugin_id)
 
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-    except Exception:
-        pass
+    # Write atomically (temp file + rename) so a crash or power loss mid-write
+    # can't leave the user's entire shell.json - not just this plugin's entry -
+    # truncated or corrupted.
+    tmp_path = config_path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(config, f, indent=2)
+    os.replace(tmp_path, config_path)
 PYEOF
 
 # Reload Omarchy Shell

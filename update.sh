@@ -80,46 +80,53 @@ anchor_id = os.environ["BAR_ANCHOR_ID"]
 
 config_path = os.path.expanduser("~/.config/omarchy/shell.json")
 if os.path.isfile(config_path):
-    try:
-        with open(config_path, "r") as f:
-            config = json.load(f)
+    # No blanket try/except here on purpose: a swallowed failure would let this
+    # script print "Update complete!" even when shell.json was left untouched -
+    # exactly the silent-success bug this plugin's install/update flow has
+    # already been bitten by once. Let a genuine failure (corrupt JSON,
+    # permission denied) abort loudly instead.
+    with open(config_path, "r") as f:
+        config = json.load(f)
 
-        bar = config.setdefault("bar", {})
-        layout = bar.setdefault("layout", {})
+    bar = config.setdefault("bar", {})
+    layout = bar.setdefault("layout", {})
 
-        # 1. Clean any duplicate or old media widgets from all sections
-        for sec in ["left", "center", "right"]:
-            if sec in layout and isinstance(layout[sec], list):
-                layout[sec] = [
-                    item for item in layout[sec]
-                    if not (isinstance(item, dict) and (item.get("id") in [plugin_id, stock_plugin_id] or str(item.get("id", "")).endswith(".media")))
-                ]
+    # 1. Clean any duplicate or old media widgets from all sections
+    for sec in ["left", "center", "right"]:
+        if sec in layout and isinstance(layout[sec], list):
+            layout[sec] = [
+                item for item in layout[sec]
+                if not (isinstance(item, dict) and (item.get("id") in [plugin_id, stock_plugin_id] or str(item.get("id", "")).endswith(".media")))
+            ]
 
-        # 2. Get the target section AFTER cleaning
-        target = layout.setdefault(section, [])
+    # 2. Get the target section AFTER cleaning
+    target = layout.setdefault(section, [])
 
-        # 3. Insert plugin_id after the anchor widget (or append if anchor not found)
-        inserted = False
-        for i, item in enumerate(target):
-            if isinstance(item, dict) and item.get("id") == anchor_id:
-                target.insert(i + 1, {"id": plugin_id})
-                inserted = True
-                break
+    # 3. Insert plugin_id after the anchor widget (or append if anchor not found)
+    inserted = False
+    for i, item in enumerate(target):
+        if isinstance(item, dict) and item.get("id") == anchor_id:
+            target.insert(i + 1, {"id": plugin_id})
+            inserted = True
+            break
 
-        if not inserted:
-            target.append({"id": plugin_id})
+    if not inserted:
+        target.append({"id": plugin_id})
 
-        # 4. Ensure the stock media plugin remains disabled
-        disabled = config.setdefault("disabledPlugins", [])
-        if stock_plugin_id not in disabled:
-            disabled.append(stock_plugin_id)
+    # 4. Ensure the stock media plugin remains disabled
+    disabled = config.setdefault("disabledPlugins", [])
+    if stock_plugin_id not in disabled:
+        disabled.append(stock_plugin_id)
 
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
+    # Write atomically (temp file + rename) so a crash or power loss mid-write
+    # can't leave the user's entire shell.json - not just this plugin's entry -
+    # truncated or corrupted.
+    tmp_path = config_path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(config, f, indent=2)
+    os.replace(tmp_path, config_path)
 
-        print(f"Layout verified: {plugin_id} is active in shell.json.")
-    except Exception as e:
-        print(f"Note: Could not update shell.json automatically: {e}")
+    print(f"Layout verified: {plugin_id} is active in shell.json.")
 PYEOF
 
 # 7. Restart Omarchy Shell to apply updates

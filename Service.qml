@@ -30,6 +30,42 @@ Item {
     return list
   }
 
+  // Per-app volume: the PipeWire stream node correlated to the active player, if any.
+  readonly property var activePlayerStream: activePlayer ? MediaModel.findPlayerStream(activePlayer, playbackStreams) : null
+  readonly property bool hasVolumeControl: activePlayerStream !== null && activePlayerStream.audio !== null
+  readonly property real volume: hasVolumeControl ? activePlayerStream.audio.volume : 1.0
+  readonly property bool muted: hasVolumeControl ? activePlayerStream.audio.muted : false
+
+  function setVolume(value) {
+    if (!hasVolumeControl) return false
+    if (typeof value !== "number" || !isFinite(value)) return false
+    activePlayerStream.audio.volume = Math.max(0, Math.min(1, value))
+    return true
+  }
+
+  function adjustVolume(delta) {
+    if (!hasVolumeControl) return false
+    return setVolume(activePlayerStream.audio.volume + delta)
+  }
+
+  function toggleMute() {
+    if (!hasVolumeControl) return false
+    activePlayerStream.audio.muted = !activePlayerStream.audio.muted
+    return true
+  }
+
+  // Live audio level for the active player's own stream, so the bar visualizer's
+  // amplitude tracks real loudness instead of a synthetic pulse. Shares the same
+  // correlated node as volume control above, so it's only available when
+  // hasVolumeControl is also true.
+  PwNodePeakMonitor {
+    id: peakMonitor
+    node: root.activePlayerStream
+    enabled: root.activePlayerStream !== null
+  }
+
+  readonly property real audioLevel: peakMonitor.enabled ? Math.max(0, Math.min(1, peakMonitor.peak)) : 0
+
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
   // playerStartedAt changes every time syncPlayingOrder() runs (it writes playerStartedAt = next).
@@ -126,7 +162,7 @@ Item {
     artFetchProc.running = false
     artFetchProc.command = [
       "bash", "-c",
-      "set -euo pipefail; URL=\"$1\"; CACHE_FILE=\"$2\"; CACHE_DIR=\"$(dirname \"$CACHE_FILE\")\"; mkdir -p -m 0700 \"$CACHE_DIR\"; TMP_FILE=$(mktemp -p \"$CACHE_DIR\" artwork.XXXXXX); trap 'rm -f \"${TMP_FILE:-}\"' EXIT; if [[ \"$URL\" =~ ^https:// ]]; then HTTP_CODE=$(curl -sS --max-time 3 --max-filesize 2097152 --proto \"=https\" -w \"%{http_code}\" \"$URL\" -o \"$TMP_FILE\" 2>/dev/null || echo \"000\"); if [[ \"$HTTP_CODE\" != \"200\" ]]; then exit 1; fi; elif [[ \"$URL\" =~ ^file://(/.*) ]] || [[ \"$URL\" =~ ^(/.*) ]]; then FILE_PATH=\"${BASH_REMATCH[1]}\"; if [[ ! -f \"$FILE_PATH\" || -L \"$FILE_PATH\" ]]; then exit 1; fi; FILE_SIZE=$(stat -c %s \"$FILE_PATH\" 2>/dev/null || echo 99999999); if (( FILE_SIZE > 2097152 || FILE_SIZE < 4 )); then exit 1; fi; head -c 2097152 \"$FILE_PATH\" > \"$TMP_FILE\"; else exit 1; fi; MAGIC=$(od -N 12 -A n -t x1 \"$TMP_FILE\" 2>/dev/null | tr -d \" \\n\"); if [[ \"$MAGIC\" =~ ^89504e470d0a1a0a ]] || [[ \"$MAGIC\" =~ ^ffd8 ]] || [[ \"$MAGIC\" =~ ^47494638 ]] || [[ \"$MAGIC\" =~ ^424d ]] || [[ \"$MAGIC\" =~ ^52494646.{8}57454250 ]]; then mv -f \"$TMP_FILE\" \"$CACHE_FILE\"; exit 0; else exit 1; fi",
+      "set -euo pipefail; URL=\"$1\"; CACHE_FILE=\"$2\"; CACHE_DIR=\"$(dirname \"$CACHE_FILE\")\"; mkdir -p -m 0700 \"$CACHE_DIR\"; TMP_FILE=$(mktemp -p \"$CACHE_DIR\" artwork.XXXXXX); trap 'rm -f \"${TMP_FILE:-}\"' EXIT; if [[ \"$URL\" =~ ^https:// ]]; then HTTP_CODE=$(curl -sS --max-time 3 --max-filesize 2097152 --proto \"=https\" -w \"%{http_code}\" \"$URL\" -o \"$TMP_FILE\" 2>/dev/null || echo \"000\"); if [[ \"$HTTP_CODE\" != \"200\" ]]; then exit 1; fi; elif [[ \"$URL\" =~ ^file://(/.*) ]] || [[ \"$URL\" =~ ^(/.*) ]]; then FILE_PATH=\"${BASH_REMATCH[1]}\"; python3 -c '\nimport os,stat,sys\np=sys.argv[1]\nfd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)\nst=os.fstat(fd)\nif not(stat.S_ISREG(st.st_mode) and 4<=st.st_size<=2097152):\n os.close(fd)\n sys.exit(1)\nd=os.read(fd,2097152)\nos.close(fd)\nsys.stdout.buffer.write(d)\n' \"$FILE_PATH\" > \"$TMP_FILE\" 2>/dev/null; else exit 1; fi; MAGIC=$(od -N 12 -A n -t x1 \"$TMP_FILE\" 2>/dev/null | tr -d \" \\n\"); if [[ \"$MAGIC\" =~ ^89504e470d0a1a0a ]] || [[ \"$MAGIC\" =~ ^ffd8 ]] || [[ \"$MAGIC\" =~ ^47494638 ]] || [[ \"$MAGIC\" =~ ^424d ]] || [[ \"$MAGIC\" =~ ^52494646.{8}57454250 ]]; then mv -f \"$TMP_FILE\" \"$CACHE_FILE\"; exit 0; else exit 1; fi",
       "--",
       raw,
       root.artworkCachePath
@@ -627,6 +663,9 @@ Item {
       artist: finalArtist,
       album: finalAlbum,
       artUrl: root.artUrl,
+      hasVolumeControl: root.hasVolumeControl,
+      volume: root.volume,
+      muted: root.muted,
       canGoNext: p ? !!p.canGoNext : false,
       canGoPrevious: p ? !!p.canGoPrevious : false,
       canTogglePlaying: p ? (!!p.canTogglePlaying || !!p.canPlay || !!p.canPause) : false
@@ -675,6 +714,22 @@ Item {
 
     function sourceSwitchPrevious(): string {
       return root.switchSource(-1, true, true) ? "ok" : "unhandled"
+    }
+
+    function volumeUp(): string {
+      return root.adjustVolume(0.05) ? "ok" : "unhandled"
+    }
+
+    function volumeDown(): string {
+      return root.adjustVolume(-0.05) ? "ok" : "unhandled"
+    }
+
+    function setVolume(value: real): string {
+      return root.setVolume(value) ? "ok" : "unhandled"
+    }
+
+    function toggleMute(): string {
+      return root.toggleMute() ? "ok" : "unhandled"
     }
 
     function ping(): string {
