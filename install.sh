@@ -94,13 +94,13 @@ def _atomic_write_json(path, data):
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
+            try:
+                mode = stat.S_IMODE(os.stat(path).st_mode)
+                os.fchmod(f.fileno(), mode)
+            except FileNotFoundError:
+                pass
             f.flush()
             os.fsync(f.fileno())
-        try:
-            mode = stat.S_IMODE(os.stat(path).st_mode)
-            os.chmod(tmp_path, mode)
-        except FileNotFoundError:
-            pass
         os.replace(tmp_path, path)
     except BaseException:
         try:

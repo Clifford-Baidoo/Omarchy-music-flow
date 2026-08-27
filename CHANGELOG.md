@@ -57,6 +57,10 @@
     files; a `shell.json` symlinked to an out-of-tree "victim" file is
     rejected (`ELOOP`) before any write is attempted, leaving the victim
     file byte-for-byte untouched.
+  - Follow-up hardening: the temp file's permissions are now set with
+    `os.fchmod` on the still-open file descriptor instead of `os.chmod` on
+    the path after closing it, removing a narrow path-based window between
+    fd-close and the permission set / rename.
 
 ### Reliability
 
