@@ -20,7 +20,12 @@ STOCK_PLUGIN_ID="omarchy.media"
 BAR_SECTION="left"
 BAR_ANCHOR_ID="omarchy.workspaces"
 TARGET_DIR="${HOME}/.config/omarchy/plugins/${PLUGIN_ID}"
-LEGACY_DIR="${HOME}/.config/omarchy/plugins/nek0.media"
+# The original repo used a per-user plugin id (${USER_NAME}.media) before
+# this fork switched to the fixed custom.media id above. Derive the legacy
+# id from the actual account running this script, not a hardcoded name -
+# it only ever matched one specific developer's own machine otherwise.
+CURRENT_USER="$(id -un)"
+LEGACY_DIR="${HOME}/.config/omarchy/plugins/${CURRENT_USER}.media"
 
 MPV_MPRIS_CANDIDATES=(
     "/usr/lib/mpv-mpris/mpris.so"
@@ -33,9 +38,18 @@ echo -e "${BLUE}==>${NC} Synchronizing ${GREEN}Omarchy Music Flow${NC} [${PLUGIN
 mkdir -p "${TARGET_DIR}"
 
 # 2. Clean legacy plugin folder if it exists
-if [ -d "${LEGACY_DIR}" ]; then
-    echo -e "${BLUE}==>${NC} Cleaning legacy plugin directory: ${LEGACY_DIR}"
-    rm -rf "${LEGACY_DIR}"
+#
+# -L guards against a same-user process having swapped LEGACY_DIR for a
+# symlink between the -d check and this running: mv/rm never traverse
+# through a symlink to reach its target anyway (they act on the directory
+# entry itself), so that swap was never able to reach outside this path -
+# but backing up instead of an unconditional rm -rf, matching uninstall.sh's
+# TARGET_DIR handling below, means a legitimate directory here is never
+# destroyed outright, just moved aside.
+if [ -d "${LEGACY_DIR}" ] && [ ! -L "${LEGACY_DIR}" ]; then
+    LEGACY_BACKUP_DIR="$(dirname "${LEGACY_DIR}")/.$(basename "${LEGACY_DIR}").bak.$(date +%Y%m%d%H%M%S)"
+    mv "${LEGACY_DIR}" "${LEGACY_BACKUP_DIR}"
+    echo -e "${BLUE}==>${NC} Moved legacy plugin directory to: ${LEGACY_BACKUP_DIR}"
 fi
 
 # 3. Copy updated plugin files
@@ -96,112 +110,7 @@ fi
 echo -e "${BLUE}==>${NC} Verifying status bar configuration in ~/.config/omarchy/shell.json..."
 PLUGIN_ID="${PLUGIN_ID}" STOCK_PLUGIN_ID="${STOCK_PLUGIN_ID}" \
 BAR_SECTION="${BAR_SECTION}" BAR_ANCHOR_ID="${BAR_ANCHOR_ID}" \
-python3 - << 'PYEOF'
-import json, os, stat, tempfile
-
-plugin_id = os.environ["PLUGIN_ID"]
-stock_plugin_id = os.environ["STOCK_PLUGIN_ID"]
-section = os.environ["BAR_SECTION"]
-anchor_id = os.environ["BAR_ANCHOR_ID"]
-
-
-def _open_no_follow(path, max_bytes=2 * 1024 * 1024):
-    # O_NOFOLLOW rejects a symlinked config file outright instead of
-    # transparently following it, so there's no check-then-open window
-    # between the isfile() check below and the actual read for a same-user
-    # process to swap a symlink into. O_NONBLOCK stops a planted FIFO from
-    # blocking open() indefinitely - the same failure mode already fixed in
-    # the artwork-fetch path (Service.qml/BarWidget.qml); it's a no-op for
-    # the regular file this is required to be. After opening, fstat the fd
-    # (not the path, which could have changed again) to reject anything
-    # that isn't a bounded-size regular file before it's ever handed to
-    # json.load().
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode):
-            raise OSError(f"refusing to read non-regular file at {path}")
-        if st.st_size > max_bytes:
-            raise OSError(f"refusing to read oversized config at {path} ({st.st_size} bytes)")
-    except BaseException:
-        os.close(fd)
-        raise
-    return os.fdopen(fd, "r")
-
-
-def _atomic_write_json(path, data):
-    # tempfile.mkstemp creates the temp file with O_CREAT|O_EXCL in one
-    # syscall (mode 0600, unpredictable random suffix) in the *same*
-    # directory as the target - no predictable ".tmp" name and no separate
-    # check-then-open window for another same-user process to pre-plant a
-    # symlink there and redirect this write into an arbitrary file. fsync
-    # before the rename so a crash immediately after writing can't lose the
-    # data; os.replace is still the atomic swap into the final path.
-    directory = os.path.dirname(path) or "."
-    fd, tmp_path = tempfile.mkstemp(prefix=".shell.json.", suffix=".tmp", dir=directory)
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-            try:
-                mode = stat.S_IMODE(os.stat(path).st_mode)
-                os.fchmod(f.fileno(), mode)
-            except FileNotFoundError:
-                pass
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-config_path = os.path.expanduser("~/.config/omarchy/shell.json")
-if os.path.isfile(config_path):
-    # No blanket try/except here on purpose: a swallowed failure would let this
-    # script print "Update complete!" even when shell.json was left untouched -
-    # exactly the silent-success bug this plugin's install/update flow has
-    # already been bitten by once. Let a genuine failure (corrupt JSON,
-    # permission denied, or a symlinked config) abort loudly instead.
-    with _open_no_follow(config_path) as f:
-        config = json.load(f)
-
-    bar = config.setdefault("bar", {})
-    layout = bar.setdefault("layout", {})
-
-    # 1. Clean any duplicate or old media widgets from all sections
-    for sec in ["left", "center", "right"]:
-        if sec in layout and isinstance(layout[sec], list):
-            layout[sec] = [
-                item for item in layout[sec]
-                if not (isinstance(item, dict) and (item.get("id") in [plugin_id, stock_plugin_id] or str(item.get("id", "")).endswith(".media")))
-            ]
-
-    # 2. Get the target section AFTER cleaning
-    target = layout.setdefault(section, [])
-
-    # 3. Insert plugin_id after the anchor widget (or append if anchor not found)
-    inserted = False
-    for i, item in enumerate(target):
-        if isinstance(item, dict) and item.get("id") == anchor_id:
-            target.insert(i + 1, {"id": plugin_id})
-            inserted = True
-            break
-
-    if not inserted:
-        target.append({"id": plugin_id})
-
-    # 4. Ensure the stock media plugin remains disabled
-    disabled = config.setdefault("disabledPlugins", [])
-    if stock_plugin_id not in disabled:
-        disabled.append(stock_plugin_id)
-
-    _atomic_write_json(config_path, config)
-
-    print(f"Layout verified: {plugin_id} is active in shell.json.")
-PYEOF
+python3 "${SCRIPT_DIR}/scripts/configure_bar.py" --action enable
 
 # 7. Restart Omarchy Shell to apply updates
 if command -v omarchy >/dev/null 2>&1; then

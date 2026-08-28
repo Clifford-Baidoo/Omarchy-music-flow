@@ -14,6 +14,17 @@ BarWidget {
   property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
   property bool showText: true           // Toggle track title / artist text in bar capsule
 
+  // The original repo registered this plugin under a per-user id
+  // (${USER_NAME}.media) before this fork switched to the fixed
+  // "custom.media" id above. Derive that legacy id from the account
+  // actually running the shell instead of a hardcoded name - a literal
+  // like "nek0.media" only ever matched one specific developer's own
+  // machine and was a no-op fallback for everyone else.
+  readonly property string legacyUserPluginId: {
+    var u = Quickshell.env("USER") || Quickshell.env("LOGNAME") || ""
+    return u ? (u + ".media") : ""
+  }
+
   readonly property var mediaService: {
     if (service) return service
     if (!root.bar || !root.bar.shell) return null
@@ -21,8 +32,8 @@ BarWidget {
       return root.bar.shell.serviceFor(root.moduleName)
     if (root.bar.shell.serviceFor("custom.media"))
       return root.bar.shell.serviceFor("custom.media")
-    if (root.bar.shell.serviceFor("nek0.media"))
-      return root.bar.shell.serviceFor("nek0.media")
+    if (root.legacyUserPluginId && root.bar.shell.serviceFor(root.legacyUserPluginId))
+      return root.bar.shell.serviceFor(root.legacyUserPluginId)
     if (root.bar.shell.serviceFor("omarchy.media"))
       return root.bar.shell.serviceFor("omarchy.media")
     if (root.bar.shell.firstPartyServiceFor("omarchy.media"))
@@ -67,7 +78,15 @@ BarWidget {
     return findFallbackActivePlayer()
   }
   readonly property var sourcePlayers: mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0 ? mediaService.sourcePlayers : fallbackPlayers
-  readonly property bool isPlaying: (activePlayer && activePlayer.isPlaying) || false
+  // Prefer mediaService.isPlaying when the service backs the current activePlayer: it
+  // also treats a player as playing when its PipeWire stream is actively flowing even
+  // if MPRIS's own PlaybackStatus is stale (e.g. Chromium reporting "Stopped" while a
+  // tab still has an unmuted, uncorked audio stream). The no-service fallback path has
+  // no PipeWire correlation available, so it stays on raw MPRIS state.
+  readonly property bool isPlaying: {
+    if (mediaService && mediaService.activePlayer) return Boolean(mediaService.isPlaying)
+    return (activePlayer && activePlayer.isPlaying) || false
+  }
 
   // Per-app volume mirrors mediaService only — the standalone fallback path (no service)
   // has no PipeWire stream correlation available, so volume control is simply unavailable then.
@@ -85,13 +104,23 @@ BarWidget {
 
   // While playing, drive amplitude from the active player's real PipeWire peak level
   // (mediaService.audioLevel) so all visualizer modes react to actual loudness instead of
-  // a constant. Falls back to the old fixed energy when no stream could be correlated to
-  // the player (mediaService.hasVolumeControl is false in that case too, since both
-  // features key off the same correlated node). Paused/idle keep the ambient drift levels.
-  property real audioGain: 2.4
+  // a constant. Falls back to the old fixed energy when no matching PipeWire stream could
+  // be found for the player at all. Paused/idle keep the ambient drift levels.
+  //
+  // audioGain was 2.4, which sounds like a modest boost but isn't: live-sampled
+  // mediaService.audioLevel for ordinary loud playback (a YouTube video in Chromium)
+  // sat in the 0.33-0.86 range, and 2.4x of that clips the Math.min(1.0, ...) ceiling
+  // for the overwhelming majority of samples (14/15 in one live capture) - the exact
+  // same constant 1.0 the "no live data" branch above returns. So the genuinely
+  // reactive path was visually indistinguishable from the ambient fallback for most
+  // real playback, which is what read as "it's falling back" even though
+  // hasLiveAudioLevel/fallbackPeakActive correctly reported real data was in use.
+  // Dropped to a gain that only lifts genuinely quiet passages up toward the ceiling,
+  // instead of pinning ordinary loud playback there too.
+  property real audioGain: 1.15
   property real audioFloor: 0.15
   readonly property real liveAudioLevel: (mediaService && mediaService.audioLevel) || 0
-  readonly property bool hasLiveAudioLevel: Boolean(mediaService && mediaService.hasVolumeControl)
+  readonly property bool hasLiveAudioLevel: Boolean(mediaService && mediaService.hasLiveAudioLevel)
   readonly property real targetEnergy: {
     if (!isPlaying) return hasMedia ? 0.18 : 0.08
     if (!hasLiveAudioLevel) return 1.0
@@ -276,13 +305,26 @@ BarWidget {
 
       property real phase: 0
 
-      // Continuously moving phase so motion never freezes abruptly
-      NumberAnimation on phase {
+      // Phase speed scales with root.currentEnergy instead of running on a fixed
+      // wall-clock loop: previously phase advanced a full cycle every 2200ms
+      // regardless of what was playing, so only the wave's amplitude reacted to
+      // real audio - the motion itself always looked like the same repeating
+      // loop no matter how loud or quiet the track got (reported: "moving in a
+      // short loop", not in sync with the sound). Baseline rate matches the old
+      // fixed 2200ms/cycle; energy scales it from ~0.4x (quiet/idle ambient
+      // drift, motion never freezes abruptly) up to ~2x (loud) so a real beat
+      // drop visibly speeds the motion up, not just its amplitude.
+      FrameAnimation {
+        id: phaseDriver
         running: true
-        from: 0
-        to: Math.PI * 2
-        duration: 2200
-        loops: Animation.Infinite
+        readonly property real baseRate: (Math.PI * 2) / 2.2
+
+        onTriggered: {
+          if (frameTime <= 0 || frameTime > 1) return
+          var speed = baseRate * (0.4 + root.currentEnergy * 1.6)
+          var next = waveCanvas.phase + speed * frameTime
+          waveCanvas.phase = next >= Math.PI * 2 ? next - Math.PI * 2 : next
+        }
       }
 
       onPhaseChanged: requestPaint()
@@ -558,7 +600,7 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(340))
+    contentWidth: popup.fittedContentWidth(Style.space(300))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
     Column {
@@ -747,7 +789,15 @@ BarWidget {
         width: parent.width
         spacing: Style.space(6)
 
-        Row {
+        // Flow instead of Row: the exact pixel width available here depends on
+        // theme spacing overrides, font metrics, and popup width clamping that
+        // can't be predicted from fixed numbers alone (a hardcoded width already
+        // overflowed the popup's edge once at this row's natural content width).
+        // Flow wraps the toggle pill onto its own line if it doesn't fit,
+        // instead of letting it render past the popup's edge - the popup's
+        // height already sizes to column.implicitHeight, so a wrap just makes
+        // the popup a bit taller instead of visually overflowing sideways.
+        Flow {
           width: parent.width
           spacing: Style.space(6)
 
@@ -772,7 +822,11 @@ BarWidget {
                 // buttons never start out looking hovered.
                 property bool hovered: false
 
-                width: Style.space(48)
+                // Sized from the label's own implicit width instead of a fixed guess:
+                // a hardcoded width can't account for font metrics/theme scale, and a
+                // fixed-width sibling of this same row already overflowed once from
+                // exactly that kind of guess (see the toggle pill below).
+                width: flowBtnLabel.implicitWidth + Style.space(16)
                 height: Style.space(24)
                 radius: Style.spacing.labelGap
                 color: isSelected
@@ -783,6 +837,7 @@ BarWidget {
                   : Border.none()
 
                 Row {
+                  id: flowBtnLabel
                   anchors.centerIn: parent
                   spacing: Style.space(2)
                   Text {
@@ -823,7 +878,9 @@ BarWidget {
           // Text / Pure Flow Toggle Pill
           BorderSurface {
             id: textToggleBtn
-            width: Style.space(80)
+            // Sized from the label's own implicit width instead of a fixed guess -
+            // a hardcoded width here is exactly what overflowed the popup's edge.
+            width: toggleLabel.implicitWidth + Style.space(16)
             height: Style.space(24)
             radius: Style.spacing.labelGap
             color: root.showText
@@ -834,6 +891,7 @@ BarWidget {
               : Border.none()
 
             Row {
+              id: toggleLabel
               anchors.centerIn: parent
               spacing: Style.space(3)
               Text {
