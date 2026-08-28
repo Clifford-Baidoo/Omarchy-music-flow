@@ -2,6 +2,87 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Visualizer/beat-sync could silently stop reacting to real audio while a track was
+  genuinely playing** (`Service.qml`, `BarWidget.qml`). Player selection, `isPlaying`,
+  and the visualizer's amplitude gate all read MPRIS `PlaybackStatus` exclusively —
+  never cross-checked against the PipeWire stream's own corked/muted state, even
+  though that cross-check (`playerHasActiveStream()`) already existed in
+  `MediaModel.js` as dead code, never called from anywhere. Reproduced live on this
+  machine: Chromium had 3 actively-streaming (uncorked, unmuted) PipeWire audio nodes
+  while its own MPRIS `PlaybackStatus` reported `"Stopped"` (a known Chromium
+  media-session quirk) — so the widget fell back to ambient/idle visualizer mode
+  while audio was genuinely playing, matching the reported symptom (no visual
+  reaction to a beat drop). Added `isPlayerActive()` in `Service.qml` (`player.isPlaying
+  || playerHasActiveStream(player)`) and wired it into every place that previously
+  read raw `p.isPlaying` for selection/ordering/`isPlaying`
+  (`syncPlayingOrder`, `orderedSourcePlayers`, `mostRecentPlayingPlayer`,
+  `selectActivePlayer`, `root.isPlaying`), plus `BarWidget.qml`'s own `isPlaying`
+  (which prefers `mediaService.isPlaying` when the service backs the current
+  player). The no-service fallback path is unchanged (no PipeWire correlation
+  available there).
+
+- **Visualizer motion never actually tracked the music — root cause: the wrong
+  PipeWire stream was being monitored** (`MediaModel.js`, `Service.qml`,
+  `BarWidget.qml`). Two compounding issues:
+  - The `phase` value that every visualizer mode's shape/timing is built from
+    advanced on a fixed `NumberAnimation` (a full 0→2π cycle every 2200ms,
+    forever, regardless of what was playing) - only amplitude reacted to real
+    audio, never the motion's speed. Replaced with a `FrameAnimation` that
+    advances `phase` at a rate scaled by `root.currentEnergy` (~0.4x at
+    idle/quiet up to ~2x at full energy), so a real loudness swing now visibly
+    speeds the motion up too, not just its height.
+  - The actual root cause, found via live IPC diagnostics added to
+    `statusJson()`/`IpcHandler{target:"media"}`: `audioLevel` measured exactly
+    `0` across 10 samples over 3 seconds while a video was audibly playing.
+    `findPlayerStream()` (used for both volume control and peak monitoring)
+    only returns the *first* PipeWire stream matching a player - but a browser
+    can have several simultaneous streams (multiple tabs/windows playing audio
+    at once), all reporting the same generic app name with no per-tab property
+    to distinguish them. Live on this machine: 5 simultaneous Chromium audio
+    streams existed, and the one being monitored for peak level wasn't the one
+    actually producing sound. Factored the match predicate out of
+    `findPlayerStream` into `streamMatchesPlayer()` and added
+    `matchingActiveStreams()`, which returns *every* matching non-corked,
+    non-muted stream instead of just the first. `Service.qml` now runs a
+    `PwNodePeakMonitor` per candidate stream (via `Instantiator`) and takes the
+    max peak across all of them, instead of a single monitor tied to
+    `activePlayerStream` (which volume control still uses as-is, since picking
+    an arbitrary one of several duplicate app streams is a reasonable-enough
+    default there). Verified live via `qs ipc call media status` before/after:
+    `audioLevel` went from a flat `0` across every sample to genuinely varying
+    `0.08`-`0.55` in real time, tracking the actual audio.
+  - Note: a pre-existing (not introduced by this fix) "Binding loop detected
+    for property activePlayer" warning was noticed in the Quickshell log during
+    this investigation - it fires 3 times at startup (component-construction
+    churn: `selectActivePlayer()` writes `lastActivePlayerKey`/
+    `preferredPlayerKey`, both of which `activePlayer`'s own binding reads) and
+    does not recur during normal operation. Confirmed unrelated to this fix
+    (audioLevel updated correctly and continuously throughout testing despite
+    it), left as-is rather than refactoring `selectActivePlayer()`'s
+    side-effect model unprompted.
+
+- **The "Words ON"/"Pure Flow" toggle pill overflowed the popup's right edge,
+  truncating its text** (`BarWidget.qml`). The flow-mode-switcher row's content
+  (5 fixed-width mode buttons + gaps + the toggle pill's own fixed width) was
+  wider than the popup's available inner width, so the last element (the toggle
+  pill) ran past the popup's own edge. A first pass widened the fixed pixel
+  values (popup content width, pill width), but that's guessing at font
+  metrics/theme spacing scale with no way to render and verify locally, and it
+  still overflowed. Replaced the guesswork with a structural fix: the outer
+  `Row` holding the mode-button group and the toggle pill is now a `Flow`,
+  which wraps the toggle pill onto its own line instead of letting it render
+  past the popup's edge if it doesn't fit (the popup's height already sizes to
+  `column.implicitHeight`, so a wrap just makes the popup slightly taller
+  instead of overflowing sideways). Both the mode buttons and the toggle pill
+  are now sized from their own label's `implicitWidth` instead of a hardcoded
+  guess, so a button can never be narrower than what its own text needs
+  regardless of font/theme. The popup's base content width was also reduced
+  (410px → 300px, down from the original 340px too) per feedback that the
+  widened popup was too large - safe to shrink since the Flow-wrap is now the
+  actual overflow guarantee, not the popup's raw width.
+
 ### Security
 
 - **Fixed a TOCTOU race in local artwork loading** (`Service.qml`, `BarWidget.qml`). The
@@ -87,6 +168,21 @@
     steps confirmed the old `json.load()` path silently parsed a file grown
     past its checked cap, while the new read loop detects the same
     post-check growth and raises before parsing.
+  - Follow-up: made the encoding explicit on both sides instead of relying on
+    implicit defaults. The write side (`os.fdopen(fd, "w")`) used the
+    platform's locale-dependent default text encoding, not guaranteed to be
+    UTF-8 (e.g. a `C`/`POSIX` locale, common in minimal containers/services
+    with no locale configured); now opened with `encoding="utf-8"`
+    explicitly. The read side's bounded byte buffer was being handed to
+    `json.loads(bytes)`, which auto-detects UTF-8/16/32 from a BOM/null-byte
+    heuristic rather than assuming a fixed encoding; now decoded via
+    `.decode("utf-8")` explicitly first, so a mismatch fails loudly
+    (`UnicodeDecodeError`) instead of being silently reinterpreted under a
+    different encoding. Verified: round-tripping non-ASCII content (emoji,
+    accented characters, CJK) through write→read is unchanged; a file
+    containing invalid UTF-8 bytes is now explicitly rejected with a clear
+    `UnicodeDecodeError` instead of the previous auto-detection's implicit
+    behavior.
 
 - **Fixed a deterministic (non-racy) symlink-overwrite in plugin file
   installation** (`install.sh`, `update.sh`). Both scripts copied plugin
@@ -141,6 +237,25 @@
   Verified: normal titles/URLs clean identically to before; the same 20MB
   payload now processes in single-digit milliseconds with output bounded
   to 4096 chars.
+
+- **Bounded worst-case CPU from unbounded PipeWire node properties fed into
+  player/stream matching** (`MediaModel.js`). The Chromium-visualizer-desync fix
+  above wires `playerHasActiveStream()` into the player-selection hot path, which
+  runs its matching (`streamLabelKey`, `normalizeAppName`, `isBlacklistedStream`,
+  `isPlaybackStream`) over raw PipeWire node properties (`application.name`,
+  `node.name`, `media.name`, `application.process.binary`, `node.description`) —
+  same trust model as the MPRIS metadata already capped above: any same-user
+  process can register a PipeWire node and set these properties to an arbitrary,
+  protocol-unbounded length. Measured on the pre-fix code: a 50MB attacker
+  property took 759ms per `playerHasActiveStream()` call, now running on every
+  player/stream change instead of being dead code. Applied `capText()` at the
+  same two leaf functions every caller already routes through
+  (`streamLabelKey`, `normalizeAppName`) plus the two spots that scan raw
+  joined properties directly (`isBlacklistedStream`, `isPlaybackStream`).
+  Verified: normal player/stream correlation (including the live Chromium/
+  Spotify case above) is unaffected; the same 50MB payload now processes in
+  14ms, roughly constant regardless of input size (2ms at 1MB, 5ms at 10MB,
+  14ms at 50MB).
 
 ### Reliability
 

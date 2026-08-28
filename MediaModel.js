@@ -47,13 +47,17 @@ function nodeProps(node) {
 function isBlacklistedStream(node) {
   if (!node) return true
   var p = nodeProps(node)
-  var raw = [
+  // capText bounds this before the .indexOf() scans below: PipeWire node properties
+  // are set by the client that registered the node (any same-user process), with no
+  // protocol-enforced length limit, same trust model as the MPRIS text already
+  // capped elsewhere in this file.
+  var raw = capText([
     p["application.name"] || "",
     p["application.process.binary"] || "",
     p["node.name"] || "",
     node.name || "",
     node.description || ""
-  ].join(" ").toLowerCase()
+  ].join(" ")).toLowerCase()
 
   var blacklisted = [
     "speech-dispatcher",
@@ -79,18 +83,18 @@ function isPlaybackStream(node) {
   var p = nodeProps(node)
 
   // 1. Filter out notification/event/alert/system sound effects
-  var role = String(p["media.role"] || p["node.role"] || "").toLowerCase()
+  var role = capText(String(p["media.role"] || p["node.role"] || "")).toLowerCase()
   if (role === "event" || role === "notification" || role === "alert" || role === "test" || role === "sound-effect") {
     return false
   }
 
   // 2. Filter out Discord & transient message notification sounds
-  var mediaName = String(p["media.name"] || "").toLowerCase()
+  var mediaName = capText(String(p["media.name"] || "")).toLowerCase()
   if (mediaName.indexOf("notification") !== -1 || mediaName.indexOf("alert") !== -1 || mediaName.indexOf("message") !== -1 || mediaName.indexOf("ping") !== -1) {
     return false
   }
 
-  var appName = String(p["application.name"] || p["application.process.binary"] || "").toLowerCase()
+  var appName = capText(String(p["application.name"] || p["application.process.binary"] || "")).toLowerCase()
   if (appName.indexOf("discord") !== -1 && role !== "music" && mediaName.indexOf("music") === -1) {
     return false
   }
@@ -104,7 +108,9 @@ function isPlaybackStream(node) {
 }
 
 function streamLabelKey(label) {
-  var key = String(label || "").toLowerCase()
+  // Every caller (rawStreamLabel's output, playerAppLabel's dbus fallback) routes
+  // through here, so bounding the input here covers the whole matching pipeline.
+  var key = capText(String(label || "")).toLowerCase()
   key = key.replace(/^pipewire alsa \[/, "")
   key = key.replace(/\]$/, "")
   key = key.replace(/^alsa playback \[/, "")
@@ -138,7 +144,9 @@ var APP_FAMILY_MAP = {
 }
 
 function normalizeAppName(name) {
-  var s = String(name || "").toLowerCase()
+  // Bounds areAppsInSameFamily's inputs (MPRIS identity/desktopEntry/dbusName and
+  // PipeWire application.name/etc.) before the regex chain below runs.
+  var s = capText(String(name || "")).toLowerCase()
   s = s.replace(/^org\.mpris\.mediaplayer2\./, "")
   s = s.replace(/[\._]instance.*$/, "")
   s = s.replace(/[^a-z0-9]/g, "")
@@ -197,30 +205,32 @@ function playerHasPlaybackStream(player, playbackStreams) {
 // Resolves the single PipeWire stream node that corresponds to a player, for volume
 // control. Reuses the same label/family matching heuristics as playerHasPlaybackStream,
 // preferring an actively unmuted/uncorked match over a corked/muted one.
-function findPlayerStream(player, playbackStreams) {
-  if (!player) return null
+function streamMatchesPlayer(player, sNode) {
+  if (!player || !sNode) return false
   var pLabel = playerAppLabel(player)
   var pKey = streamLabelKey(pLabel)
   var pDbus = String(player.dbusName || "")
+  var sLabel = rawStreamLabel(sNode)
+  var sKey = streamLabelKey(sLabel)
+  var p = nodeProps(sNode)
+  var binary = String(p["application.process.binary"] || "")
 
+  return (sKey && (sKey === pKey || sKey.indexOf(pKey) !== -1 || pKey.indexOf(sKey) !== -1))
+    || areAppsInSameFamily(pLabel, sLabel)
+    || areAppsInSameFamily(pDbus, sLabel)
+    || (binary && (areAppsInSameFamily(pLabel, binary) || areAppsInSameFamily(pDbus, binary)))
+}
+
+function findPlayerStream(player, playbackStreams) {
+  if (!player) return null
   var streams = Array.isArray(playbackStreams) ? playbackStreams : []
   var fallback = null
 
   for (var i = 0; i < streams.length; i++) {
     var sNode = streams[i]
-    if (!sNode) continue
-    var sLabel = rawStreamLabel(sNode)
-    var sKey = streamLabelKey(sLabel)
+    if (!sNode || !streamMatchesPlayer(player, sNode)) continue
+
     var p = nodeProps(sNode)
-    var binary = String(p["application.process.binary"] || "")
-
-    var matches = (sKey && (sKey === pKey || sKey.indexOf(pKey) !== -1 || pKey.indexOf(sKey) !== -1))
-      || areAppsInSameFamily(pLabel, sLabel)
-      || areAppsInSameFamily(pDbus, sLabel)
-      || (binary && (areAppsInSameFamily(pLabel, binary) || areAppsInSameFamily(pDbus, binary)))
-
-    if (!matches) continue
-
     var isCorked = p["pulse.corked"] === "true" || p["pulse.corked"] === true
     var isMuted = sNode.audio && sNode.audio.muted
     if (!isCorked && !isMuted) return sNode
@@ -228,6 +238,30 @@ function findPlayerStream(player, playbackStreams) {
   }
 
   return fallback
+}
+
+function matchingActiveStreams(player, playbackStreams) {
+  // Same matching rules as findPlayerStream, but returns every non-corked,
+  // non-muted match instead of just the first. A player like a browser can have
+  // several simultaneous streams (multiple tabs/windows playing audio at once),
+  // all reporting as the same generic app name with no per-tab PipeWire property
+  // to tell them apart - the first match (what findPlayerStream/volume control
+  // uses) isn't necessarily the one actually producing sound. Used for peak
+  // monitoring, where picking the loudest of all matches instead of just the
+  // first one matters.
+  if (!player) return []
+  var streams = Array.isArray(playbackStreams) ? playbackStreams : []
+  var out = []
+  for (var i = 0; i < streams.length; i++) {
+    var sNode = streams[i]
+    if (!sNode || !streamMatchesPlayer(player, sNode)) continue
+    var p = nodeProps(sNode)
+    var isCorked = p["pulse.corked"] === "true" || p["pulse.corked"] === true
+    var isMuted = sNode.audio && sNode.audio.muted
+    if (isCorked || isMuted) continue
+    out.push(sNode)
+  }
+  return out
 }
 
 function playerHasActiveStream(player, playbackStreams) {
@@ -755,6 +789,7 @@ if (typeof module !== "undefined") {
     playerHasPlaybackStream: playerHasPlaybackStream,
     playerHasActiveStream: playerHasActiveStream,
     findPlayerStream: findPlayerStream,
+    matchingActiveStreams: matchingActiveStreams,
     playerKey: playerKey,
     playerCanonicalKey: playerCanonicalKey,
     trackSignature: trackSignature,

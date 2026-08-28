@@ -54,17 +54,39 @@ Item {
     return true
   }
 
-  // Live audio level for the active player's own stream, so the bar visualizer's
-  // amplitude tracks real loudness instead of a synthetic pulse. Shares the same
-  // correlated node as volume control above, so it's only available when
-  // hasVolumeControl is also true.
-  PwNodePeakMonitor {
-    id: peakMonitor
-    node: root.activePlayerStream
-    enabled: root.activePlayerStream !== null
+  // Live audio level for the active player, so the bar visualizer's amplitude
+  // tracks real loudness instead of a synthetic pulse. Deliberately NOT the same
+  // single correlated node volume control uses (activePlayerStream/findPlayerStream
+  // just take the first match): a player like a browser can have several
+  // simultaneous PipeWire streams (multiple tabs/windows playing audio at once),
+  // all reporting as the same generic app name with no per-tab property to
+  // distinguish them, so the first match isn't necessarily the one actually
+  // producing sound. Reproduced live: audioLevel stayed exactly 0 across 10
+  // samples over 3s while a video was audibly playing, because 5 simultaneous
+  // Chromium streams existed and the monitored one wasn't the loud one. Monitor
+  // every matching stream and take the loudest instead.
+  readonly property var audioCandidateStreams: activePlayer ? MediaModel.matchingActiveStreams(activePlayer, playbackStreams) : []
+
+  Instantiator {
+    id: audioCandidateMonitors
+    model: root.audioCandidateStreams
+    delegate: PwNodePeakMonitor {
+      required property var modelData
+      node: modelData
+      enabled: true
+    }
   }
 
-  readonly property real audioLevel: peakMonitor.enabled ? Math.max(0, Math.min(1, peakMonitor.peak)) : 0
+  readonly property bool hasLiveAudioLevel: audioCandidateMonitors.count > 0
+
+  readonly property real audioLevel: {
+    var maxPeak = 0
+    for (var i = 0; i < audioCandidateMonitors.count; i++) {
+      var obj = audioCandidateMonitors.objectAt(i)
+      if (obj) maxPeak = Math.max(maxPeak, obj.peak)
+    }
+    return Math.max(0, Math.min(1, maxPeak))
+  }
 
   readonly property var sourcePlayers: orderedSourcePlayers()
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
@@ -83,7 +105,9 @@ Item {
   // isPlaying reads activePlayer.isPlaying directly — a real QML property access.
   // When activePlayer switches (e.g. Spotify→YouTube), this re-evaluates immediately.
   // When the current player pauses/resumes, activePlayer.isPlaying notifies this binding.
-  readonly property bool isPlaying: (activePlayer && activePlayer.isPlaying) || false
+  // Falls back to isPlayerActive's PipeWire-stream check for players whose MPRIS
+  // PlaybackStatus is stale (see isPlayerActive above).
+  readonly property bool isPlaying: isPlayerActive(activePlayer)
 
   // Per-player signal connections — use Mpris.players (UntypedObjectModel) directly
   // as the Instantiator model so Qt creates one Connections delegate per player.
@@ -235,6 +259,17 @@ Item {
     return MediaModel.playerHasActiveStream(player, playbackStreams)
   }
 
+  // MPRIS PlaybackStatus can go stale while a player is actually producing audio -
+  // Chromium in particular can report "Stopped" while one of its tabs still has an
+  // unmuted, uncorked PipeWire stream flowing (observed live: 3 active Chromium
+  // audio nodes with MPRIS PlaybackStatus == "Stopped"). Treat a player as active
+  // if either signal says so, so selection/isPlaying/the visualizer don't silently
+  // fall back to ambient mode while real audio is playing.
+  function isPlayerActive(player) {
+    if (!player) return false
+    return Boolean(player.isPlaying) || playerHasActiveStream(player)
+  }
+
   function playerKey(player) {
     return MediaModel.playerKey(player)
   }
@@ -271,7 +306,7 @@ Item {
       if (!key) continue
 
       alive[key] = true
-      if (!p.isPlaying) continue
+      if (!isPlayerActive(p)) continue
 
       if (playerStartedAt[key] === undefined) {
         serial += 1
@@ -304,8 +339,8 @@ Item {
     }
 
     list.sort(function(a, b) {
-      var aPlay = Boolean(a.isPlaying)
-      var bPlay = Boolean(b.isPlaying)
+      var aPlay = isPlayerActive(a)
+      var bPlay = isPlayerActive(b)
       if (aPlay !== bPlay) return aPlay ? -1 : 1
       if (aPlay && bPlay) {
         var orderDelta = playerOrder(b, 0) - playerOrder(a, 0)
@@ -343,7 +378,7 @@ Item {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
 
-      if (p.isPlaying) {
+      if (isPlayerActive(p)) {
         var order = playerOrder(p, i + 1)
         if (!newest || order > newestOrder) {
           newest = p
@@ -360,7 +395,7 @@ Item {
     if (preferredPlayerKey) {
       var preferred = playerForKey(preferredPlayerKey)
       if (preferred && hasMetadata(preferred)) {
-        if (preferred.isPlaying) {
+        if (isPlayerActive(preferred)) {
           lastActivePlayerKey = preferredPlayerKey
           return preferred
         }
@@ -644,6 +679,7 @@ Item {
   function statusJson() {
     var p = selectActivePlayer()
     var playing = p ? (p.isPlaying === true) : false
+    var playingViaStream = isPlayerActive(p)
     var t = p ? (p.trackTitle || (p.metadata && p.metadata["xesam:title"]) || "") : ""
     var a = p ? (p.trackArtist || (p.metadata && p.metadata["xesam:artist"]) || "") : ""
     var cleanedTitle = MediaModel.cleanTitle(t, a)
@@ -657,6 +693,11 @@ Item {
       hasPlayer: p !== null,
       hasMedia: p !== null && (Boolean(finalTitle) || Boolean(finalArtist) || playing),
       playing: playing,
+      playingViaStream: playingViaStream,
+      serviceIsPlaying: root.isPlaying,
+      audioLevel: root.audioLevel,
+      activePlayerStreamFound: root.activePlayerStream !== null,
+      audioCandidateStreamCount: root.audioCandidateStreams.length,
       identity: finalIdentity,
       desktopEntry: finalDesktop,
       title: finalTitle,

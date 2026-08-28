@@ -153,7 +153,12 @@ def _read_json_no_follow(path, max_bytes=2 * 1024 * 1024):
             raise OSError(f"refusing to read oversized config at {path} (>{max_bytes} bytes)")
     finally:
         os.close(fd)
-    return json.loads(b"".join(chunks))
+    # Decode as UTF-8 explicitly rather than letting json.loads() auto-detect
+    # UTF-8/16/32 from a BOM/null-byte pattern (its default behavior on a bytes
+    # input) - shell.json is always written as UTF-8 by _atomic_write_json below,
+    # so this should be the only encoding ever expected here, and a mismatch
+    # should fail loudly instead of being silently reinterpreted.
+    return json.loads(b"".join(chunks).decode("utf-8"))
 
 
 def _atomic_write_json(path, data):
@@ -167,7 +172,7 @@ def _atomic_write_json(path, data):
     directory = os.path.dirname(path) or "."
     fd, tmp_path = tempfile.mkstemp(prefix=".shell.json.", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             try:
                 mode = stat.S_IMODE(os.stat(path).st_mode)
