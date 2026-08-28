@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The Chromium/YouTube visualizer looked like it was stuck on the ambient
+  fallback even though it genuinely wasn't** (`BarWidget.qml`). Reported live:
+  `mediaService.audioLevel` was demonstrably real and varying (confirmed via
+  IPC: `fallbackPeakActive: false`, `audioLevelUnreliable: false`, level moving
+  sample to sample), yet the visualizer still looked flat. Root cause found by
+  sampling `audioLevel` live and running it through the actual formula:
+  `targetEnergy = Math.max(audioFloor, Math.min(1.0, liveAudioLevel *
+  audioGain))` with `audioGain = 2.4` clipped to the hard `1.0` ceiling for
+  14 of 15 live samples of ordinary loud playback (raw levels observed in the
+  0.33-0.86 range) - the *exact same constant* the `!hasLiveAudioLevel`
+  branch above it returns for "no live data at all." So the genuinely
+  reactive path was visually indistinguishable from the fallback for most
+  real playback, independent of the fallback logic itself being correct.
+  Lowered `audioGain` to `1.15` - re-verified against a fresh live sample: 0
+  of 15 values now clip, spread runs roughly 0.4-0.99 and tracks the
+  underlying loudness variation instead of saturating.
+
 ### Changed
 
 - **Hardened two remaining rough edges in the `shell.json`/legacy-plugin-directory

@@ -106,7 +106,18 @@ BarWidget {
   // (mediaService.audioLevel) so all visualizer modes react to actual loudness instead of
   // a constant. Falls back to the old fixed energy when no matching PipeWire stream could
   // be found for the player at all. Paused/idle keep the ambient drift levels.
-  property real audioGain: 2.4
+  //
+  // audioGain was 2.4, which sounds like a modest boost but isn't: live-sampled
+  // mediaService.audioLevel for ordinary loud playback (a YouTube video in Chromium)
+  // sat in the 0.33-0.86 range, and 2.4x of that clips the Math.min(1.0, ...) ceiling
+  // for the overwhelming majority of samples (14/15 in one live capture) - the exact
+  // same constant 1.0 the "no live data" branch above returns. So the genuinely
+  // reactive path was visually indistinguishable from the ambient fallback for most
+  // real playback, which is what read as "it's falling back" even though
+  // hasLiveAudioLevel/fallbackPeakActive correctly reported real data was in use.
+  // Dropped to a gain that only lifts genuinely quiet passages up toward the ceiling,
+  // instead of pinning ordinary loud playback there too.
+  property real audioGain: 1.15
   property real audioFloor: 0.15
   readonly property real liveAudioLevel: (mediaService && mediaService.audioLevel) || 0
   readonly property bool hasLiveAudioLevel: Boolean(mediaService && mediaService.hasLiveAudioLevel)
