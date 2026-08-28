@@ -38,9 +38,18 @@ echo -e "${BLUE}==>${NC} Synchronizing ${GREEN}Omarchy Music Flow${NC} [${PLUGIN
 mkdir -p "${TARGET_DIR}"
 
 # 2. Clean legacy plugin folder if it exists
-if [ -d "${LEGACY_DIR}" ]; then
-    echo -e "${BLUE}==>${NC} Cleaning legacy plugin directory: ${LEGACY_DIR}"
-    rm -rf "${LEGACY_DIR}"
+#
+# -L guards against a same-user process having swapped LEGACY_DIR for a
+# symlink between the -d check and this running: mv/rm never traverse
+# through a symlink to reach its target anyway (they act on the directory
+# entry itself), so that swap was never able to reach outside this path -
+# but backing up instead of an unconditional rm -rf, matching uninstall.sh's
+# TARGET_DIR handling below, means a legitimate directory here is never
+# destroyed outright, just moved aside.
+if [ -d "${LEGACY_DIR}" ] && [ ! -L "${LEGACY_DIR}" ]; then
+    LEGACY_BACKUP_DIR="$(dirname "${LEGACY_DIR}")/.$(basename "${LEGACY_DIR}").bak.$(date +%Y%m%d%H%M%S)"
+    mv "${LEGACY_DIR}" "${LEGACY_BACKUP_DIR}"
+    echo -e "${BLUE}==>${NC} Moved legacy plugin directory to: ${LEGACY_BACKUP_DIR}"
 fi
 
 # 3. Copy updated plugin files

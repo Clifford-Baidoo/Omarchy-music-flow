@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed
+
+- **Hardened two remaining rough edges in the `shell.json`/legacy-plugin-directory
+  handling** flagged by a follow-up review of `bbe61ff`, neither exploitable as-is
+  but both worth closing for defense-in-depth:
+  - `update.sh`'s legacy-directory cleanup (`rm -rf "${LEGACY_DIR}"`) is now a
+    `[ -d ] && [ ! -L ]`-guarded `mv` into a timestamped backup, matching
+    `uninstall.sh`'s existing `TARGET_DIR` handling, instead of an unconditional
+    recursive delete. `rm -rf` was already safe here in practice (`LEGACY_DIR` is
+    `$HOME` + a fixed literal, never attacker input, and `rm`/`mv` never traverse
+    a symlink to reach its target) - this just makes "don't touch it if it isn't
+    really a directory" and "never destroy, only move aside" explicit and
+    verifiable rather than relying on that reasoning holding.
+  - `scripts/configure_bar.py`'s `_atomic_write_json` mirrored the target's file
+    mode via a fresh `os.stat(path)` at write time - a pathname-based lookup
+    that (harmlessly, since `os.replace()` never follows a symlink for the final
+    swap) would still follow a symlink planted at `path` since the earlier read.
+    `_open_no_follow`/`_read_json_no_follow` now also return the mode captured
+    from the already-validated fd, threaded through `enable()`/`disable()` into
+    `_atomic_write_json(path, data, mode=...)` for the common case (reading and
+    writing the same `config_path`); the pathname-based fallback remains only
+    for `install.sh`'s cross-file bootstrap case (reading a fallback template,
+    writing `config_path`), where mirroring a different file's mode wouldn't be
+    meaningful anyway. Verified behaviorally: a `shell.json` given mode `640`
+    keeps that mode across both an update and a subsequent uninstall.
+
 ### Fixed
 
 - **The legacy-plugin-id lookups in `update.sh` and `BarWidget.qml` were hardcoded

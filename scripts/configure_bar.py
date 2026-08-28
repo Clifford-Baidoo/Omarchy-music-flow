@@ -42,7 +42,7 @@ def _open_no_follow(path, max_bytes=2 * 1024 * 1024):
     except BaseException:
         os.close(fd)
         raise
-    return fd
+    return fd, stat.S_IMODE(st.st_mode)
 
 
 def _read_json_no_follow(path, max_bytes=2 * 1024 * 1024):
@@ -54,7 +54,7 @@ def _read_json_no_follow(path, max_bytes=2 * 1024 * 1024):
     # max_bytes + 1 bytes directly from the validated fd instead, so an
     # oversized concurrent grow is caught by the read loop rather than
     # trusted to a stale size check, then parse only that bounded buffer.
-    fd = _open_no_follow(path, max_bytes)
+    fd, mode = _open_no_follow(path, max_bytes)
     try:
         limit = max_bytes + 1
         chunks = []
@@ -74,10 +74,14 @@ def _read_json_no_follow(path, max_bytes=2 * 1024 * 1024):
     # input) - shell.json is always written as UTF-8 by _atomic_write_json below,
     # so this should be the only encoding ever expected here, and a mismatch
     # should fail loudly instead of being silently reinterpreted.
-    return json.loads(b"".join(chunks).decode("utf-8"))
+    # mode is returned alongside the parsed data so a caller writing back to
+    # this same path can fchmod() the fd it already validated, instead of
+    # doing a second, pathname-based os.stat() at write time that would just
+    # follow a symlink planted at path in the meantime (see _atomic_write_json).
+    return json.loads(b"".join(chunks).decode("utf-8")), mode
 
 
-def _atomic_write_json(path, data):
+def _atomic_write_json(path, data, mode=None):
     # tempfile.mkstemp creates the temp file with O_CREAT|O_EXCL in one
     # syscall (mode 0600, unpredictable random suffix) in the *same*
     # directory as the target - no predictable ".tmp" name and no separate
@@ -90,11 +94,24 @@ def _atomic_write_json(path, data):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-            try:
-                mode = stat.S_IMODE(os.stat(path).st_mode)
+            if mode is not None:
+                # Caller already validated `path` via _open_no_follow and
+                # captured its mode from that fd - reuse it instead of a
+                # fresh os.stat(path) here, which would follow a symlink if
+                # one had since been planted at path (harmless either way,
+                # since os.replace() below never follows one, but there's no
+                # reason to make a pathname-based lookup when an fd-sourced
+                # value is already in hand).
                 os.fchmod(f.fileno(), mode)
-            except FileNotFoundError:
-                pass
+            else:
+                # No prior read of this exact path (e.g. install.sh bootstrapping
+                # config_path from a different fallback file, or config_path not
+                # existing yet) - best effort only, and a missing target is fine.
+                try:
+                    existing_mode = stat.S_IMODE(os.stat(path).st_mode)
+                    os.fchmod(f.fileno(), existing_mode)
+                except FileNotFoundError:
+                    pass
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
@@ -134,15 +151,24 @@ def enable(plugin_id, stock_plugin_id, section, anchor_id, config_path, bootstra
             "/usr/share/omarchy/config/omarchy/shell.json",
         ]
         config = None
+        existing_mode = None
         for dp in default_paths:
             if dp and os.path.isfile(dp):
                 try:
-                    config = _read_json_no_follow(dp)
+                    config, read_mode = _read_json_no_follow(dp)
+                    # Only reuse the fd-sourced mode when we actually read
+                    # config_path itself - a fallback candidate (e.g. the
+                    # stock template under OMARCHY_PATH) is a different file
+                    # and its permissions have no bearing on what config_path
+                    # should end up with.
+                    if dp == config_path:
+                        existing_mode = read_mode
                     break
                 except Exception:
                     continue
         if not isinstance(config, dict):
             config = _default_config(anchor_id)
+            existing_mode = None
     else:
         # Updater: shell.json is expected to already exist from install. No
         # blanket try/except here on purpose - a swallowed failure would let
@@ -153,7 +179,7 @@ def enable(plugin_id, stock_plugin_id, section, anchor_id, config_path, bootstra
         # instead. Simply not existing yet is fine - nothing to update.
         if not os.path.isfile(config_path):
             return
-        config = _read_json_no_follow(config_path)
+        config, existing_mode = _read_json_no_follow(config_path)
 
     bar = config.setdefault("bar", {})
     layout = bar.setdefault("layout", {})
@@ -185,7 +211,7 @@ def enable(plugin_id, stock_plugin_id, section, anchor_id, config_path, bootstra
         disabled.append(stock_plugin_id)
 
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    _atomic_write_json(config_path, config)
+    _atomic_write_json(config_path, config, mode=existing_mode)
 
     if bootstrap:
         print(f"Status bar layout updated: {plugin_id} successfully registered in shell.json.")
@@ -203,7 +229,7 @@ def disable(plugin_id, stock_plugin_id, section, anchor_id, config_path):
     # plugin's flow has already been bitten by once. Let a genuine failure
     # (corrupt JSON, permission denied, or a symlinked config) abort loudly
     # instead.
-    config = _read_json_no_follow(config_path)
+    config, existing_mode = _read_json_no_follow(config_path)
 
     layout = config.get("bar", {}).get("layout", {})
     for sec in ["left", "center", "right"]:
@@ -229,7 +255,7 @@ def disable(plugin_id, stock_plugin_id, section, anchor_id, config_path):
     if stock_plugin_id in disabled:
         disabled.remove(stock_plugin_id)
 
-    _atomic_write_json(config_path, config)
+    _atomic_write_json(config_path, config, mode=existing_mode)
 
 
 def main():
