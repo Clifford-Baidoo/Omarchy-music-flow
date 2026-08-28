@@ -4,6 +4,41 @@
 
 ### Fixed
 
+- **The legacy-plugin-id lookups in `update.sh` and `BarWidget.qml` were hardcoded
+  to one developer's own username (`nek0.media`) instead of the actual account
+  running the script/shell.** `update.sh`'s `LEGACY_DIR` cleanup and
+  `BarWidget.qml`'s `mediaService` fallback chain both existed to find leftovers
+  from the original repo's per-user plugin id scheme (`${USER_NAME}.media`), but
+  a literal `"nek0.media"` only ever matches the id string when this repo's
+  original author is the one running it - for anyone else it's a silent no-op.
+  Fixed by deriving the id at runtime instead: `update.sh` now uses
+  `LEGACY_DIR="${HOME}/.config/omarchy/plugins/$(id -un).media"`, and
+  `BarWidget.qml` adds a `legacyUserPluginId` property built from
+  `Quickshell.env("USER")` (falling back to `LOGNAME`).
+
+### Changed
+
+- **Deduplicated the `shell.json` layout-editing logic that was pasted as a
+  ~150-line Python heredoc into all three of `install.sh`, `update.sh`, and
+  `uninstall.sh`** (the `_open_no_follow`/`_read_json_no_follow`/
+  `_atomic_write_json` security primitives plus the insert/clean/restore logic
+  around them). Consistent today, but a maintenance hazard: a future fix to one
+  copy could easily miss the other two, silently reopening a bug already fixed
+  elsewhere - exactly the kind of drift that caused this plugin's original
+  stale-template-id bug. Moved into a single `scripts/configure_bar.py`, invoked
+  by each script as `python3 "${SCRIPT_DIR}/scripts/configure_bar.py" --action
+  enable|disable [--bootstrap]`; `install.sh`/`update.sh` keep their existing
+  per-script behavior difference (install bootstraps a default `shell.json` if
+  none exists anywhere, update aborts loudly on a missing/corrupt one) via the
+  `--bootstrap` flag, and `uninstall.sh` now defines `SCRIPT_DIR` (previously
+  missing, since it had no need for it before this change) to locate the shared
+  script. Verified behaviorally against a sandboxed `$HOME`: bootstrap-install
+  on a missing `shell.json`, idempotent re-run via update (no duplicate
+  `custom.media` entries), uninstall restoring the stock widget and clearing
+  `disabledPlugins`, and update as a safe no-op when `shell.json` doesn't exist.
+
+### Fixed
+
 - **A genuinely-playing player could lose active-player selection to a different
   player that merely had an idle/silent PipeWire stream open** (`Service.qml`).
   The PipeWire-stream fallback added for the Chromium desync bug (below) treated

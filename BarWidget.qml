@@ -14,6 +14,17 @@ BarWidget {
   property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
   property bool showText: true           // Toggle track title / artist text in bar capsule
 
+  // The original repo registered this plugin under a per-user id
+  // (${USER_NAME}.media) before this fork switched to the fixed
+  // "custom.media" id above. Derive that legacy id from the account
+  // actually running the shell instead of a hardcoded name - a literal
+  // like "nek0.media" only ever matched one specific developer's own
+  // machine and was a no-op fallback for everyone else.
+  readonly property string legacyUserPluginId: {
+    var u = Quickshell.env("USER") || Quickshell.env("LOGNAME") || ""
+    return u ? (u + ".media") : ""
+  }
+
   readonly property var mediaService: {
     if (service) return service
     if (!root.bar || !root.bar.shell) return null
@@ -21,8 +32,8 @@ BarWidget {
       return root.bar.shell.serviceFor(root.moduleName)
     if (root.bar.shell.serviceFor("custom.media"))
       return root.bar.shell.serviceFor("custom.media")
-    if (root.bar.shell.serviceFor("nek0.media"))
-      return root.bar.shell.serviceFor("nek0.media")
+    if (root.legacyUserPluginId && root.bar.shell.serviceFor(root.legacyUserPluginId))
+      return root.bar.shell.serviceFor(root.legacyUserPluginId)
     if (root.bar.shell.serviceFor("omarchy.media"))
       return root.bar.shell.serviceFor("omarchy.media")
     if (root.bar.shell.firstPartyServiceFor("omarchy.media"))
