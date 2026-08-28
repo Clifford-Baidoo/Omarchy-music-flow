@@ -77,15 +77,137 @@ Item {
     }
   }
 
-  readonly property bool hasLiveAudioLevel: audioCandidateMonitors.count > 0
-
-  readonly property real audioLevel: {
+  readonly property real builtinAudioLevel: {
     var maxPeak = 0
     for (var i = 0; i < audioCandidateMonitors.count; i++) {
       var obj = audioCandidateMonitors.objectAt(i)
       if (obj) maxPeak = Math.max(maxPeak, obj.peak)
     }
     return Math.max(0, Math.min(1, maxPeak))
+  }
+
+  readonly property real audioLevel: fallbackPeakActive ? fallbackPeakLevel : builtinAudioLevel
+
+  // Quickshell's PwNodePeakMonitor can itself fail to report real peak data for a
+  // given stream regardless of anything this plugin does - confirmed on Quickshell
+  // 0.3.1 with a Spotify stream (44.1kHz, vs. a working 48kHz Chromium stream):
+  // peak read a flat 0 in an isolated test with zero involvement from this
+  // plugin's own matching/Instantiator code, while an independent `pw-record`
+  // capture of the same node proved genuinely non-silent audio was flowing. Track
+  // how long audioLevel has stayed at (near-)zero while a player is confirmed
+  // playing and a candidate stream was found; after a few seconds treat the peak
+  // data as unreliable so BarWidget falls back to its no-live-data ambient
+  // behavior instead of sitting at a flat, visually-dead floor value.
+  property real audioLevelZeroStreak: 0
+  property string audioLevelZeroTrackedKey: ""
+
+  Timer {
+    interval: 250
+    running: true
+    repeat: true
+    onTriggered: {
+      var key = root.activePlayer ? playerCanonicalKey(root.activePlayer) : ""
+      if (key !== root.audioLevelZeroTrackedKey) {
+        root.audioLevelZeroTrackedKey = key
+        root.audioLevelZeroStreak = 0
+        return
+      }
+      // Deliberately checks builtinAudioLevel, not audioLevel: once the fallback
+      // meter (below) is active, audioLevel reflects ITS reading, which would
+      // read as "reliable again" and immediately stop the fallback, which would
+      // make audioLevel broken again, restarting it - an infinite start/stop
+      // cycle. Reliability is strictly about whether the built-in monitor
+      // itself ever produces a real reading, independent of the fallback.
+      if (!root.isPlaying || audioCandidateMonitors.count === 0 || root.builtinAudioLevel > 0.01) {
+        root.audioLevelZeroStreak = 0
+      } else {
+        root.audioLevelZeroStreak += interval / 1000
+      }
+    }
+  }
+
+  readonly property bool audioLevelUnreliable: audioLevelZeroStreak >= 3.0
+  readonly property bool hasLiveAudioLevel: audioCandidateMonitors.count > 0 && (!audioLevelUnreliable || fallbackPeakActive)
+
+  // Fallback peak meter for streams the built-in PwNodePeakMonitor can't read
+  // (see audioLevelUnreliable above). Since a direct `pw-record` capture of the
+  // same node independently proved real, non-silent audio was available, drive
+  // the visualizer from that instead of settling for a non-reactive placeholder.
+  // Runs pw-record piped through a small python3 peak calculator only while
+  // confirmed needed (audioLevelUnreliable), so normal working streams never pay
+  // for an extra process. The node id is validated as a plain non-negative
+  // integer both before constructing the command and again inside the script,
+  // and passed as a positional arg after "--" (never interpolated into the
+  // script text) - the same pattern the artwork-fetch process above uses for
+  // untrusted-ish values.
+  readonly property var fallbackPeakTargetNode: audioCandidateStreams.length > 0 ? audioCandidateStreams[0] : null
+  property real fallbackPeakLevel: 0
+  property bool fallbackPeakActive: false
+
+  function stopFallbackPeakMeter() {
+    fallbackPeakProc.running = false
+    root.fallbackPeakActive = false
+    root.fallbackPeakLevel = 0
+  }
+
+  function startFallbackPeakMeter() {
+    var node = root.fallbackPeakTargetNode
+    if (!node) return
+    var nodeId = Number(node.id)
+    if (!Number.isInteger(nodeId) || nodeId < 0) return
+
+    fallbackPeakProc.running = false
+    root.fallbackPeakActive = false
+    root.fallbackPeakLevel = 0
+    // "set -m" gives the backgrounded pipeline its own process group, so a single
+    // signal to the negative PID (-$JOB_PID) reaches both pw-record and python3.
+    // Necessary: Quickshell's Process only signals its direct child (this bash
+    // instance) when stopped, and a plain `cmd1 | cmd2 &` job doesn't otherwise
+    // get its own child processes cleaned up just because the parent script
+    // exits - verified live (a standalone test without this left pw-record and
+    // python3 running as orphans after the parent bash was killed). Also
+    // verified: running python3 as a background job (not a blocking foreground
+    // command) is required for the trap to fire promptly on SIGTERM at all -
+    // a foreground `python3 ... <&coproc_fd` blocks bash's signal handling
+    // until python3 itself exits, which only happens once pw-record dies,
+    // which only happens once the trap runs - a deadlock with the earlier
+    // foreground-python3 design.
+    fallbackPeakProc.command = [
+      "bash", "-c",
+      "set -uo pipefail; NODE_ID=\"$1\"; if ! [[ \"$NODE_ID\" =~ ^[0-9]+$ ]]; then exit 1; fi; set -m; pw-record --target=\"$NODE_ID\" -P '{ format=s16 rate=44100 channels=2 }' - 2>/dev/null | python3 -u -c '\nimport struct, sys\nwhile True:\n    data = sys.stdin.buffer.read(4096)\n    if not data:\n        break\n    n = len(data) // 2\n    if n == 0:\n        continue\n    samples = struct.unpack(\"<\" + str(n) + \"h\", data[:n * 2])\n    peak = max(abs(s) for s in samples) / 32768.0\n    print(\"%.4f\" % peak, flush=True)\n' & JOB_PID=$!; trap 'kill -TERM -- \"-$JOB_PID\" 2>/dev/null' EXIT TERM INT; wait \"$JOB_PID\"",
+      "--",
+      String(nodeId)
+    ]
+    fallbackPeakProc.running = true
+  }
+
+  function refreshFallbackPeakMeter() {
+    if (root.audioLevelUnreliable && root.fallbackPeakTargetNode) {
+      startFallbackPeakMeter()
+    } else {
+      stopFallbackPeakMeter()
+    }
+  }
+
+  onAudioLevelUnreliableChanged: refreshFallbackPeakMeter()
+  onFallbackPeakTargetNodeChanged: refreshFallbackPeakMeter()
+
+  Process {
+    id: fallbackPeakProc
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: function(data) {
+        var v = parseFloat(data)
+        if (isFinite(v)) {
+          root.fallbackPeakActive = true
+          root.fallbackPeakLevel = Math.max(0, Math.min(1, v))
+        }
+      }
+    }
+    onExited: {
+      root.fallbackPeakActive = false
+      root.fallbackPeakLevel = 0
+    }
   }
 
   readonly property var sourcePlayers: orderedSourcePlayers()
@@ -262,12 +384,25 @@ Item {
   // MPRIS PlaybackStatus can go stale while a player is actually producing audio -
   // Chromium in particular can report "Stopped" while one of its tabs still has an
   // unmuted, uncorked PipeWire stream flowing (observed live: 3 active Chromium
-  // audio nodes with MPRIS PlaybackStatus == "Stopped"). Treat a player as active
-  // if either signal says so, so selection/isPlaying/the visualizer don't silently
-  // fall back to ambient mode while real audio is playing.
+  // audio nodes with MPRIS PlaybackStatus == "Stopped"). But an uncorked stream
+  // alone doesn't mean much - a browser can sit with several idle/silent tabs'
+  // audio contexts open and uncorked with nothing actually playing. Reproduced
+  // live: with Chromium's stale-Stopped tabs treated as equally "active" as a
+  // genuinely-confirmed-playing Spotify, Chromium kept winning selection over
+  // Spotify even while Spotify's own MPRIS said "Playing". Rank real MPRIS
+  // confirmation above the stream fallback so it can never be outranked by it -
+  // the fallback only matters when nothing is genuinely confirmed playing.
+  // 2 = MPRIS-confirmed playing, 1 = active only via the PipeWire-stream
+  // fallback, 0 = not active.
+  function playerActivityRank(player) {
+    if (!player) return 0
+    if (player.isPlaying) return 2
+    if (playerHasActiveStream(player)) return 1
+    return 0
+  }
+
   function isPlayerActive(player) {
-    if (!player) return false
-    return Boolean(player.isPlaying) || playerHasActiveStream(player)
+    return playerActivityRank(player) > 0
   }
 
   function playerKey(player) {
@@ -339,10 +474,10 @@ Item {
     }
 
     list.sort(function(a, b) {
-      var aPlay = isPlayerActive(a)
-      var bPlay = isPlayerActive(b)
-      if (aPlay !== bPlay) return aPlay ? -1 : 1
-      if (aPlay && bPlay) {
+      var aRank = playerActivityRank(a)
+      var bRank = playerActivityRank(b)
+      if (aRank !== bRank) return bRank - aRank
+      if (aRank > 0) {
         var orderDelta = playerOrder(b, 0) - playerOrder(a, 0)
         if (orderDelta !== 0) return orderDelta
       }
@@ -372,18 +507,21 @@ Item {
 
   function mostRecentPlayingPlayer() {
     var newest = null
+    var newestRank = 0
     var newestOrder = -1
 
     for (var i = 0; i < players.length; i++) {
       var p = players[i]
       if (!p || isProxyPlayer(p)) continue
 
-      if (isPlayerActive(p)) {
-        var order = playerOrder(p, i + 1)
-        if (!newest || order > newestOrder) {
-          newest = p
-          newestOrder = order
-        }
+      var rank = playerActivityRank(p)
+      if (rank === 0) continue
+
+      var order = playerOrder(p, i + 1)
+      if (!newest || rank > newestRank || (rank === newestRank && order > newestOrder)) {
+        newest = p
+        newestRank = rank
+        newestOrder = order
       }
     }
 
@@ -698,6 +836,9 @@ Item {
       audioLevel: root.audioLevel,
       activePlayerStreamFound: root.activePlayerStream !== null,
       audioCandidateStreamCount: root.audioCandidateStreams.length,
+      audioLevelUnreliable: root.audioLevelUnreliable,
+      audioLevelZeroStreak: root.audioLevelZeroStreak,
+      fallbackPeakActive: root.fallbackPeakActive,
       identity: finalIdentity,
       desktopEntry: finalDesktop,
       title: finalTitle,

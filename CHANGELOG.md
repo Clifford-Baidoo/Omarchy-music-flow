@@ -4,6 +4,41 @@
 
 ### Fixed
 
+- **A genuinely-playing player could lose active-player selection to a different
+  player that merely had an idle/silent PipeWire stream open** (`Service.qml`).
+  The PipeWire-stream fallback added for the Chromium desync bug (below) treated
+  "has an uncorked stream" as equally valid as "MPRIS confirms playing" when
+  ranking candidates. Reproduced live: Spotify's MPRIS reported `"Playing"` while
+  Chromium's stale `"Stopped"` tabs still had idle, uncorked streams open -
+  Chromium kept winning selection anyway. Added `playerActivityRank()` (2 =
+  MPRIS-confirmed playing, 1 = fallback-active only, 0 = inactive) so a real
+  MPRIS confirmation can never be outranked by the fallback; the fallback only
+  matters when nothing is genuinely confirmed playing. Verified live via IPC:
+  `identity` now correctly switches to Spotify once it starts playing.
+
+- **Quickshell 0.3.1's own PwNodePeakMonitor can silently fail to report peak
+  data for a stream regardless of anything this plugin does** - confirmed with
+  an isolated standalone test (zero involvement from this plugin's code) against
+  a Spotify stream: `peak` read a flat `0` continuously, while an independent
+  `pw-record` capture of the exact same node proved genuinely non-silent audio
+  was flowing (mean sample amplitude 288/32767). The only structural difference
+  from a working case (Chromium, 48kHz) was sample rate (44.1kHz). Since this is
+  a compiled system component this plugin doesn't control, added: (1) a
+  zero-streak detector (`audioLevelZeroStreak`/`audioLevelUnreliable`) that
+  treats the built-in monitor as unreliable after 3s of flat-zero readings while
+  a player is confirmed playing, and (2) a fallback peak meter that runs
+  `pw-record` piped through a small `python3` peak calculator only while
+  confirmed needed. The node id is validated as a non-negative integer both in
+  QML before use and again inside the script, passed as a positional arg after
+  `--` (never interpolated into the script text) - the same pattern this file's
+  artwork-fetch process already uses for untrusted-ish values; verified an
+  injection attempt in the id fails cleanly. The pipeline runs under `set -m`
+  with a `trap ... EXIT TERM INT` killing the negative (process-group) PID,
+  since Quickshell's `Process` only signals its direct child on stop and a
+  plain backgrounded pipe doesn't otherwise get cleaned up - verified live that
+  an earlier design left `pw-record`/`python3` orphaned after termination, and
+  that the process-group version leaves zero orphans.
+
 - **Visualizer/beat-sync could silently stop reacting to real audio while a track was
   genuinely playing** (`Service.qml`, `BarWidget.qml`). Player selection, `isPlaying`,
   and the visualizer's amplitude gate all read MPRIS `PlaybackStatus` exclusively —
