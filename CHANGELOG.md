@@ -4,6 +4,28 @@
 
 ### Fixed
 
+- **The Spotify visualizer looked completely static despite genuinely live,
+  varying audio data** (`Service.qml`). Reported live while playing Spotify:
+  the widget itself was healthy (`hasMedia: true`, correct title/artist),
+  and `fallbackPeakActive: true` confirmed the pw-record fallback (used
+  because Quickshell's built-in `PwNodePeakMonitor` can't read Spotify's
+  44.1kHz stream - see the existing comment on `builtinAudioLevel`) was
+  active and producing real, varying numbers. But those numbers are on a
+  fundamentally different scale from the built-in monitor: a 20s live sample
+  put the fallback's raw peak-of-16-bit-PCM values at 0.03-0.30 (median
+  0.17), roughly 10x smaller than the 0.33-0.86 range `BarWidget.qml`'s
+  `audioGain` (1.15, tuned against the built-in monitor's scale) expects.
+  Fed through `targetEnergy`'s formula, that meant most of the fallback's
+  range - including the median - landed below `BarWidget.qml`'s own `0.15`
+  floor and got clamped flat, so genuinely reactive fallback audio still
+  read as "not displaying." Added a `fallbackPeakGain` (3.0) applied to the
+  raw pw-record peak at the source in `Service.qml`, before it's ever handed
+  to `BarWidget.qml`'s existing gain - re-verified against a fresh 60-sample
+  live Spotify capture: scaled `audioLevel` now spans 0.16-1.0 (median 0.60),
+  and after `BarWidget.qml`'s own gain/floor, `targetEnergy` spans 0.19-1.0
+  with 0 of 60 samples pinned at the floor (previously all of the median and
+  below were).
+
 - **The Chromium/YouTube visualizer looked like it was stuck on the ambient
   fallback even though it genuinely wasn't** (`BarWidget.qml`). Reported live:
   `mediaService.audioLevel` was demonstrably real and varying (confirmed via
