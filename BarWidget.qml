@@ -11,7 +11,7 @@ BarWidget {
   moduleName: "custom.media"
 
   property var service: null
-  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
+  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse", "minimal"
   property bool showText: true           // Toggle track title / artist text in bar capsule
 
   // The original repo registered this plugin under a per-user id
@@ -281,7 +281,7 @@ BarWidget {
     id: pill
     anchors.centerIn: parent
     height: Math.min(parent.height - Style.space(6), Style.space(28))
-    width: root.isMinimized
+    width: (root.isMinimized || root.visualizerMode === "minimal")
       ? height
       : (root.showText ? (flowRow.implicitWidth + Style.space(16)) : Style.space(110))
     radius: height / 2
@@ -301,7 +301,7 @@ BarWidget {
       id: waveCanvas
       anchors.fill: parent
       anchors.margins: Style.space(2)
-      visible: !root.isMinimized
+      visible: !root.isMinimized && root.visualizerMode !== "minimal"
 
       property real phase: 0
 
@@ -438,10 +438,27 @@ BarWidget {
       }
     }
 
-    // Pure Minimalist Visualizer Mode (Source Glyph centered over flow)
+    // Minimalist Mode (Play / Pause Glyph only)
     Item {
       anchors.fill: parent
-      visible: !root.isMinimized && !root.showText
+      visible: !root.isMinimized && root.visualizerMode === "minimal"
+
+      Text {
+        anchors.centerIn: parent
+        text: root.playIcon
+        textFormat: Text.PlainText
+        color: root.isPlaying ? Color.accent : (clickArea.containsMouse ? Color.accent : (root.hasMedia ? (root.bar ? root.bar.barForeground : Color.foreground) : Qt.darker(root.bar ? root.bar.barForeground : Color.foreground, 1.4)))
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.title
+        font.bold: true
+        Behavior on color { ColorAnimation { duration: 140 } }
+      }
+    }
+
+    // Pure Flow Mode (Source Glyph centered over flow)
+    Item {
+      anchors.fill: parent
+      visible: !root.isMinimized && !root.showText && root.visualizerMode !== "minimal"
 
       Text {
         anchors.centerIn: parent
@@ -575,6 +592,14 @@ BarWidget {
     onClicked: function(mouse) {
       if (mouse.button === Qt.MiddleButton) {
         root.runAction("playPause", root.activePlayer)
+      } else if (root.visualizerMode === "minimal") {
+        // In minimal mode the whole pill is the play/pause control:
+        // left-click toggles playback, right-click still opens the panel.
+        if (mouse.button === Qt.RightButton) {
+          root.popupOpen = !root.popupOpen
+        } else {
+          root.runAction("playPause", root.activePlayer)
+        }
       } else if (mouse.button === Qt.RightButton) {
         root.showText = !root.showText
       } else {
@@ -589,7 +614,7 @@ BarWidget {
         root.runAction("next", root.activePlayer)
       }
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? MediaModel.sanitizeText(root.title + (root.artist ? " — " + root.artist : "")) : "Music Player (Right-click: Toggle Text)")
+    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? MediaModel.sanitizeText(root.title + (root.artist ? " — " + root.artist : "")) : (root.visualizerMode === "minimal" ? "Music Player (Click: Play/Pause · Right-click: Panel)" : "Music Player (Right-click: Toggle Text)"))
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
@@ -600,7 +625,7 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(300))
+    contentWidth: popup.fittedContentWidth(Style.space(360))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
     Column {
@@ -793,15 +818,18 @@ BarWidget {
         // theme spacing overrides, font metrics, and popup width clamping that
         // can't be predicted from fixed numbers alone (a hardcoded width already
         // overflowed the popup's edge once at this row's natural content width).
-        // Flow wraps the toggle pill onto its own line if it doesn't fit,
-        // instead of letting it render past the popup's edge - the popup's
-        // height already sizes to column.implicitHeight, so a wrap just makes
-        // the popup a bit taller instead of visually overflowing sideways.
+        // The mode pills themselves live in a nested Flow too so a mode button
+        // (e.g. the last "Minimal" pill) wraps onto the next line instead of
+        // rendering past the popup's edge - Flow wraps the toggle pill onto its
+        // own line if it doesn't fit, and the popup's height already sizes to
+        // column.implicitHeight, so a wrap just makes the popup a bit taller
+        // instead of visually overflowing sideways.
         Flow {
           width: parent.width
           spacing: Style.space(6)
 
-          Row {
+          Flow {
+            width: parent.width
             spacing: Style.space(4)
             Repeater {
               model: [
@@ -809,7 +837,8 @@ BarWidget {
                 { id: "bars", name: "Bars", icon: "󰝛" },
                 { id: "dots", name: "Dots", icon: "󰄰" },
                 { id: "particles", name: "Sparks", icon: "󰠱" },
-                { id: "pulse", name: "Pulse", icon: "󰓎" }
+                { id: "pulse", name: "Pulse", icon: "󰓎" },
+                { id: "minimal", name: "Minimal", icon: "󰏤" }
               ]
 
               BorderSurface {
