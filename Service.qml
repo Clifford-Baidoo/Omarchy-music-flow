@@ -143,6 +143,20 @@ Item {
   readonly property var fallbackPeakTargetNode: audioCandidateStreams.length > 0 ? audioCandidateStreams[0] : null
   property real fallbackPeakLevel: 0
   property bool fallbackPeakActive: false
+  // The pw-record fallback computes a raw per-chunk peak of signed 16-bit PCM
+  // samples (max(abs(sample))/32768), which is not the same metric as whatever
+  // Quickshell's built-in PwNodePeakMonitor reports - live-sampled side by side,
+  // ordinary loud Chromium playback put builtinAudioLevel around 0.33-0.86, while
+  // ordinary loud Spotify playback through this fallback (forced on it by the
+  // channel-mismatch bug above) sat around 0.03-0.30 for the same perceived
+  // loudness. BarWidget's audioGain is tuned against the builtin monitor's scale
+  // and applies equally to whichever source is active, so without correcting the
+  // fallback's smaller raw numbers here, most fallback-driven playback pins at
+  // BarWidget's floor and reads as non-reactive even though the data is genuinely
+  // live and varying (reproduced: median raw level 0.17 over a 20s Spotify
+  // sample maps to just 0.196 after BarWidget's 1.15x gain, below its own
+  // 0.15 floor for anything quieter than that median).
+  readonly property real fallbackPeakGain: 3.0
 
   function stopFallbackPeakMeter() {
     fallbackPeakProc.running = false
@@ -200,7 +214,7 @@ Item {
         var v = parseFloat(data)
         if (isFinite(v)) {
           root.fallbackPeakActive = true
-          root.fallbackPeakLevel = Math.max(0, Math.min(1, v))
+          root.fallbackPeakLevel = Math.max(0, Math.min(1, v * root.fallbackPeakGain))
         }
       }
     }
