@@ -280,6 +280,10 @@ BarWidget {
     return MediaModel.sourceIcon(player)
   }
 
+  function sourceIconPath(player) {
+    return MediaModel.sourceIconPath(player)
+  }
+
   visible: true
   implicitWidth: pill.width + Style.space(8)
   implicitHeight: barSize
@@ -644,9 +648,21 @@ BarWidget {
             visible: source !== ""
           }
 
+          // Real app icon (e.g. Cider's own logo) when artwork is missing
+          Image {
+            id: fallbackSourceImage
+            anchors.centerIn: parent
+            visible: root.artUrl === "" && status === Image.Ready
+            width: Style.font.displayLarge
+            height: Style.font.displayLarge
+            fillMode: Image.PreserveAspectFit
+            mipmap: true
+            source: root.sourceIconPath(root.activePlayer)
+          }
+
           Text {
             anchors.centerIn: parent
-            visible: root.artUrl === ""
+            visible: root.artUrl === "" && !fallbackSourceImage.visible
             text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
             textFormat: Text.PlainText
             color: Color.accent
@@ -663,8 +679,19 @@ BarWidget {
           // Active Source Badge
           Row {
             spacing: Style.space(4)
+            Image {
+              id: badgeSourceImage
+              source: root.hasMedia ? root.sourceIconPath(root.activePlayer) : ""
+              visible: status === Image.Ready
+              width: Style.font.caption
+              height: Style.font.caption
+              fillMode: Image.PreserveAspectCrop
+              mipmap: true
+              anchors.verticalCenter: parent.verticalCenter
+            }
             Text {
               text: root.sourceIcon(root.activePlayer)
+              visible: !badgeSourceImage.visible
               textFormat: Text.PlainText
               color: Color.accent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -993,6 +1020,7 @@ BarWidget {
               && root.playerCanonicalKey(root.activePlayer) === root.playerCanonicalKey(player)
             readonly property string name: root.sourceName(player)
             readonly property string icon: root.sourceIcon(player)
+            readonly property string iconPath: root.sourceIconPath(player)
             readonly property string track: {
               if (!player) return "Active Player"
               var t = player.trackTitle || (player.metadata && player.metadata["xesam:title"]) || ""
@@ -1027,8 +1055,20 @@ BarWidget {
               anchors.rightMargin: Style.space(10)
               spacing: Style.space(10)
 
+              Image {
+                id: sourceCardIcon
+                source: sourceRow.iconPath
+                visible: status === Image.Ready
+                width: Style.font.subtitle
+                height: Style.font.subtitle
+                fillMode: Image.PreserveAspectCrop
+                mipmap: true
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
               Text {
                 text: sourceRow.icon
+                visible: !sourceCardIcon.visible
                 textFormat: Text.PlainText
                 color: sourceRow.selected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family

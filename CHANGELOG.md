@@ -34,10 +34,20 @@
 
 - **Cider platform detection** (`MediaModel.js`). Cider previously fell through
   to the generic "Media" fallback with the default note icon; it now reports as
-  "Cider" with the Nerd Font Apple glyph (U+F179), matching on identity,
-  desktop entry, or `org.mpris.MediaPlayer2.cider` (including instance
-  suffixes). Note: Cider 3.1+ ships with MPRIS disabled upstream, so metadata
-  and artwork integration covers Cider 1, 2, and 4.
+  "Cider", matching on identity, desktop entry, or
+  `org.mpris.MediaPlayer2.cider` (including instance suffixes). Note: Cider
+  3.1+ ships with MPRIS disabled upstream, so metadata and artwork integration
+  covers Cider 1, 2, and 4.
+- **Real application icons in the player panel** (`MediaModel.js`,
+  `BarWidget.qml`). The panel's source badge, the no-artwork fallback, and the
+  source selector cards now render the actual app icon (e.g. Cider's own logo
+  from `/usr/share/pixmaps/cider.png`) instead of a Nerd Font glyph, via a new
+  `sourceIconPath()` resolver. Candidate paths are validated through the same
+  `sanitizeArtUrl()` allowlist artwork uses (system icon roots only, raster
+  extensions only), and a missing file degrades gracefully to the text glyph.
+  The Apple glyph introduced with Cider detection was removed — the generic
+  media glyph remains as the text fallback. The bar capsule stays monochrome
+  glyph-based by design.
 
 ### Changed
 

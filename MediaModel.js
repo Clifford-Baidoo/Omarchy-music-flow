@@ -741,7 +741,7 @@ function detectPlatform(player) {
   if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) return { name: "Netflix", icon: "󰝆" }
 
   // 7. Dedicated desktop media players
-  if (id.indexOf("cider") !== -1) return { name: "Cider", icon: "\uf179" }
+  if (id.indexOf("cider") !== -1) return { name: "Cider", icon: "󰝚" }
   if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
   if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
   if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
@@ -781,6 +781,39 @@ function osdMessage(player, fallback) {
   return sanitizeText(label || fallback)
 }
 
+// ------------------------------------------------------------------------------
+// Real Application Icons
+// ------------------------------------------------------------------------------
+
+// Real app icons for the player panel, preferred over Nerd Font glyphs where
+// they exist. Keys are matched (substring, lowercase) against the player's
+// identity / desktopEntry / dbusName. Each candidate path is validated through
+// sanitizeArtUrl() — the same allowlist artwork uses — so only system icon
+// roots (/usr/share/icons, /usr/share/pixmaps) with raster extensions resolve;
+// a missing file resolves to "" and callers fall back to the text glyph.
+var APP_ICON_PATHS = {
+  "cider": [
+    "/usr/share/pixmaps/cider.png",
+    "/usr/share/icons/hicolor/256x256/apps/cider.png",
+    "/usr/share/icons/hicolor/512x512/apps/cider.png"
+  ]
+}
+
+function sourceIconPath(player) {
+  if (!player) return ""
+  var id = capText(String(player.identity || player.desktopEntry || player.dbusName || player.appName || "")).toLowerCase()
+
+  for (var key in APP_ICON_PATHS) {
+    if (id.indexOf(key) === -1) continue
+    var candidates = APP_ICON_PATHS[key]
+    for (var i = 0; i < candidates.length; i++) {
+      var url = sanitizeArtUrl(candidates[i])
+      if (url) return url
+    }
+  }
+  return ""
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     isProxyPlayer: isProxyPlayer,
@@ -815,6 +848,7 @@ if (typeof module !== "undefined") {
     detectPlatform: detectPlatform,
     sourceName: sourceName,
     sourceIcon: sourceIcon,
+    sourceIconPath: sourceIconPath,
     labelFor: labelFor,
     osdMessage: osdMessage
   }
