@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- **Artwork intermittently went missing until the next track change**
+  (`BarWidget.qml`, `Service.qml`). Quickshell delivers the `exited()` signal
+  for a killed `Process` asynchronously — after `running = false` returns. So
+  when a fetch was killed by a track change, its late failure exit landed a
+  moment AFTER the handler had already set `verifiedArtUrl` to the new value,
+  blanking it; since the candidate URL didn't change again, nothing re-fetched
+  and the panel stayed without artwork. Both fetchers now carry a generation
+  counter: the process records which generation it was started for and ignores
+  its own exit if the generation has moved on (stale exits are dropped).
+  Additionally, the bar widget no longer launches its own fetch while the
+  service is mid-fetch (its `artUrl` is briefly `""` in that window) — that
+  duplicate download raced the service's fetch into the same cache file and
+  left orphaned temp files behind. When the service is present it is now
+  trusted exclusively; standalone mode still fetches directly.
 - **Artwork never displayed for any player whose art the service successfully
   fetched** — including Cider (all versions that expose MPRIS), Spotify, and
   browsers (`MediaModel.js`, `BarWidget.qml`, `Service.qml`). The security

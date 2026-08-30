@@ -163,8 +163,21 @@ BarWidget {
   }
 
   property string verifiedArtUrl: ""
+  // Bumped on every artwork candidate transition. artFetchProc records the
+  // generation it was started for and ignores its own exit if the generation
+  // has since moved on: Quickshell delivers the exited() signal for a killed
+  // process asynchronously (after `running = false` returns), so the exit of a
+  // fetch killed by a track change used to land a moment AFTER the handler had
+  // already set verifiedArtUrl to the new value — blanking it and leaving the
+  // panel with no artwork until the next track change.
+  property int artFetchGeneration: 0
   readonly property string rawCandidateArtUrl: {
-    if (mediaService && mediaService.artUrl) return MediaModel.sanitizeArtUrl(mediaService.artUrl)
+    // When the service is present, trust it exclusively: while it is
+    // mid-fetch its artUrl is briefly "", and falling through to a local
+    // fetch here would duplicate the service's download and race it into the
+    // same cache file. Standalone mode (no service) still resolves directly
+    // from the player.
+    if (mediaService) return mediaService.artUrl ? MediaModel.sanitizeArtUrl(mediaService.artUrl) : ""
     if (!activePlayer) return ""
     return MediaModel.extractArtUrl(activePlayer)
   }
@@ -174,6 +187,7 @@ BarWidget {
 
   onRawCandidateArtUrlChanged: {
     var raw = root.rawCandidateArtUrl
+    root.artFetchGeneration++
     if (!raw) {
       artFetchProc.running = false
       root.verifiedArtUrl = ""
@@ -208,12 +222,18 @@ BarWidget {
       raw,
       root.artworkCachePath
     ]
+    artFetchProc.startedGeneration = root.artFetchGeneration
     artFetchProc.running = true
   }
 
   Process {
     id: artFetchProc
+    // The generation this process was started for; see artFetchGeneration.
+    property int startedGeneration: 0
     onExited: function(exitCode) {
+      // Stale exit from a fetch that was killed by a later candidate change:
+      // the newer candidate's handler already arranged the current state.
+      if (startedGeneration !== root.artFetchGeneration) return
       if (exitCode === 0) {
         root.verifiedArtUrl = "file://" + root.artworkCachePath + "?t=" + Date.now()
       } else {

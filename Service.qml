@@ -286,12 +286,21 @@ Item {
 
   readonly property string album: activePlayer && activePlayer.trackAlbum ? MediaModel.cleanAlbum(activePlayer.trackAlbum) : (activePlayer && activePlayer.metadata && activePlayer.metadata["xesam:album"] ? MediaModel.cleanAlbum(activePlayer.metadata["xesam:album"]) : "")
   property string verifiedArtUrl: ""
+  // Bumped on every artwork candidate transition; artFetchProc records the
+  // generation it was started for and ignores its own exit if the generation
+  // has moved on. Quickshell delivers exited() for a killed process
+  // asynchronously (after `running = false` returns), so the exit of a fetch
+  // killed by a track change used to land AFTER the handler had already set
+  // verifiedArtUrl — blanking it and leaving artwork missing until the next
+  // track change.
+  property int artFetchGeneration: 0
   readonly property string rawCandidateArtUrl: activePlayer ? MediaModel.extractArtUrl(activePlayer) : ""
   readonly property string artUrl: verifiedArtUrl
   readonly property string artworkCachePath: (Quickshell.env("XDG_CACHE_HOME") || (Quickshell.env("HOME") + "/.cache")) + "/omarchy/music-flow/artwork.cache"
 
   onRawCandidateArtUrlChanged: {
     var raw = root.rawCandidateArtUrl
+    root.artFetchGeneration++
     if (!raw) {
       artFetchProc.running = false
       root.verifiedArtUrl = ""
@@ -313,12 +322,18 @@ Item {
       raw,
       root.artworkCachePath
     ]
+    artFetchProc.startedGeneration = root.artFetchGeneration
     artFetchProc.running = true
   }
 
   Process {
     id: artFetchProc
+    // The generation this process was started for; see artFetchGeneration.
+    property int startedGeneration: 0
     onExited: function(exitCode) {
+      // Stale exit from a fetch that was killed by a later candidate change:
+      // the newer candidate's handler already arranged the current state.
+      if (startedGeneration !== root.artFetchGeneration) return
       if (exitCode === 0) {
         root.verifiedArtUrl = "file://" + root.artworkCachePath + "?t=" + Date.now()
       } else {
