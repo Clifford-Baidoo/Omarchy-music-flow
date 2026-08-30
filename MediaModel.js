@@ -741,6 +741,7 @@ function detectPlatform(player) {
   if (url.indexOf("netflix.com") !== -1 || rawTitle.indexOf("netflix") !== -1) return { name: "Netflix", icon: "󰝆" }
 
   // 7. Dedicated desktop media players
+  if (id.indexOf("cider") !== -1) return { name: "Cider", icon: "\uf179" }
   if (id.indexOf("mpv") !== -1) return { name: "MPV", icon: "󰐹" }
   if (id.indexOf("vlc") !== -1) return { name: "VLC", icon: "󰕼" }
   if (id.indexOf("cliamp") !== -1) return { name: "cliamp", icon: "󰎆" }
