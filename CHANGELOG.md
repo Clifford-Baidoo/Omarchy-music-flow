@@ -4,6 +4,52 @@
 
 ### Fixed
 
+- **Artwork never displayed for any player whose art the service successfully
+  fetched** — including Cider (all versions that expose MPRIS), Spotify, and
+  browsers (`MediaModel.js`, `BarWidget.qml`, `Service.qml`). The security
+  hardening in `50d5b75` started exposing the verified artwork cache URL as
+  `file://…artwork.cache?t=<Date.now()>` (the query forces Qt to reload the
+  image when the cache file is replaced), but two places then rejected the
+  query string itself: `sanitizeArtUrl()` fed the whole URI into
+  `isAllowedLocalPath()`, whose basename character check refuses `?`, and the
+  bash fetch scripts captured the query into `FILE_PATH` and handed
+  `…artwork.cache?t=…` to `os.open()`, which fails because no such literal
+  path exists. The sanitizer now validates the path portion only and reattaches
+  the query afterwards; the fetch scripts strip the query before opening. All
+  existing path restrictions still hold (verified via unit checks: cache/tmp
+  roots only, `/home` personal paths, `/proc`, traversal, SVG, and
+  non-whitelisted hosts all still blocked). Confirmed live against Cider
+  4.0.9.1: `mpris:artUrl` is a whitelisted `is1-ssl.mzstatic.com` URL, the
+  service fetched and cached a valid 640x640 JPEG, and only the widget-side
+  re-sanitization dropped it.
+- **Orphaned `artwork.*` temp files accumulated in the artwork cache dir**
+  (`BarWidget.qml`, `Service.qml`). Quickshell kills the fetch process when the
+  candidate URL changes mid-track, and a killed bash never runs its cleanup
+  trap — 16 leaked temps (~120KB each) were found on the machine this was
+  debugged on. Each fetch now sweeps stale `artwork.??????` files (exactly six
+  chars after the dot, so never `artwork.cache`) older than one minute, so a
+  concurrently running fetch's fresh temp is never touched.
+
+### Added
+
+- **Cider platform detection** (`MediaModel.js`). Cider previously fell through
+  to the generic "Media" fallback with the default note icon; it now reports as
+  "Cider" with the Nerd Font Apple glyph (U+F179), matching on identity,
+  desktop entry, or `org.mpris.MediaPlayer2.cider` (including instance
+  suffixes). Note: Cider 3.1+ ships with MPRIS disabled upstream, so metadata
+  and artwork integration covers Cider 1, 2, and 4.
+
+### Changed
+
+- **The bar widget no longer re-validates and re-copies the service's own
+  verified cache file** (`BarWidget.qml`). When `mediaService.artUrl` is the
+  plugin's own `file://<artworkCachePath>?t=…` URL, that file already passed
+  the service's magic-byte verification; re-fetching it just copied the file
+  onto itself and raced the service's next-track fetch into the same cache
+  path. The exact-prefix match only ever accepts the plugin's own cache file.
+
+### Fixed
+
 - **The Chromium/YouTube visualizer looked like it was stuck on the ambient
   fallback even though it genuinely wasn't** (`BarWidget.qml`). Reported live:
   `mediaService.audioLevel` was demonstrably real and varying (confirmed via
