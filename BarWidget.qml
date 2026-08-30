@@ -186,6 +186,18 @@ BarWidget {
       return
     }
 
+    // The service exposes its own already-verified cache URL
+    // (file://<artworkCachePath>?t=<ts>, magic-byte checked before it was
+    // ever set). Re-fetching it here would just copy the file onto itself —
+    // and race the service's next-track fetch writing the same cache file.
+    // The exact-prefix check below only matches the plugin's own cache file,
+    // never an arbitrary file in the cache directory.
+    if (raw.indexOf("file://" + root.artworkCachePath) === 0) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = raw
+      return
+    }
+
     // Remote HTTPS or local file: validate & cache with strict byte limits, no redirects, secure mktemp, and magic byte check
     root.verifiedArtUrl = ""
     artFetchProc.running = false
