@@ -626,10 +626,20 @@ function sanitizeArtUrl(rawUrl) {
 
   // 2. Local file URIs: file:///...
   if (url.indexOf("file://") === 0) {
-    var path = url.slice(7)
+    var rest = url.slice(7)
+    // A file URI may carry a query fragment (e.g. the "?t=<ts>" cache-buster
+    // this plugin appends to its verified artwork cache path so Qt reloads
+    // the image when the file is replaced). The query is not part of the
+    // filesystem path, so validate the path portion only and reattach the
+    // query afterwards. Without this, every verified cache URL was rejected
+    // by the basename character check in isAllowedLocalPath() and artwork
+    // never rendered.
+    var qIndex = rest.indexOf("?")
+    var query = qIndex === -1 ? "" : rest.slice(qIndex)
+    var path = qIndex === -1 ? rest : rest.slice(0, qIndex)
     try { path = decodeURIComponent(path) } catch (e) {}
     if (isAllowedLocalPath(path)) {
-      return "file://" + path
+      return "file://" + path + query
     }
     return ""
   }
