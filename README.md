@@ -140,7 +140,7 @@ omarchy-music-flow/
 
 - [Omarchy](https://omarchy.org/) (Arch Linux + Hyprland + Quickshell)
 - PipeWire / WirePlumber
-- Any media source (Spotify, Zen, Firefox, Chrome, Brave, Seanime, MPV, cliamp, VLC, etc.)
+- Any media source (Spotify, Cider, Zen, Firefox, Chrome, Brave, Seanime, MPV, cliamp, VLC, etc.)
 
 ---
 

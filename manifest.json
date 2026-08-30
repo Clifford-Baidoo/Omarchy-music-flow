@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "custom.media",
   "name": "Music Flow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Clifford Baidoo",
   "license": "MIT",
   "description": "MPRIS media visualizer and player controller",

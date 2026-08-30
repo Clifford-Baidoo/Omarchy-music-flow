@@ -163,8 +163,21 @@ BarWidget {
   }
 
   property string verifiedArtUrl: ""
+  // Bumped on every artwork candidate transition. artFetchProc records the
+  // generation it was started for and ignores its own exit if the generation
+  // has since moved on: Quickshell delivers the exited() signal for a killed
+  // process asynchronously (after `running = false` returns), so the exit of a
+  // fetch killed by a track change used to land a moment AFTER the handler had
+  // already set verifiedArtUrl to the new value — blanking it and leaving the
+  // panel with no artwork until the next track change.
+  property int artFetchGeneration: 0
   readonly property string rawCandidateArtUrl: {
-    if (mediaService && mediaService.artUrl) return MediaModel.sanitizeArtUrl(mediaService.artUrl)
+    // When the service is present, trust it exclusively: while it is
+    // mid-fetch its artUrl is briefly "", and falling through to a local
+    // fetch here would duplicate the service's download and race it into the
+    // same cache file. Standalone mode (no service) still resolves directly
+    // from the player.
+    if (mediaService) return mediaService.artUrl ? MediaModel.sanitizeArtUrl(mediaService.artUrl) : ""
     if (!activePlayer) return ""
     return MediaModel.extractArtUrl(activePlayer)
   }
@@ -174,6 +187,7 @@ BarWidget {
 
   onRawCandidateArtUrlChanged: {
     var raw = root.rawCandidateArtUrl
+    root.artFetchGeneration++
     if (!raw) {
       artFetchProc.running = false
       root.verifiedArtUrl = ""
@@ -186,22 +200,40 @@ BarWidget {
       return
     }
 
+    // The service exposes its own already-verified cache URL
+    // (file://<artworkCachePath>?t=<ts>, magic-byte checked before it was
+    // ever set). Re-fetching it here would just copy the file onto itself —
+    // and race the service's next-track fetch writing the same cache file.
+    // The exact-prefix check below only matches the plugin's own cache file,
+    // never an arbitrary file in the cache directory.
+    if (raw.indexOf("file://" + root.artworkCachePath) === 0) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = raw
+      return
+    }
+
     // Remote HTTPS or local file: validate & cache with strict byte limits, no redirects, secure mktemp, and magic byte check
     root.verifiedArtUrl = ""
     artFetchProc.running = false
     artFetchProc.command = [
       "bash", "-c",
-      "set -euo pipefail; URL=\"$1\"; CACHE_FILE=\"$2\"; CACHE_DIR=\"$(dirname \"$CACHE_FILE\")\"; mkdir -p -m 0700 \"$CACHE_DIR\"; TMP_FILE=$(mktemp -p \"$CACHE_DIR\" artwork.XXXXXX); trap 'rm -f \"${TMP_FILE:-}\"' EXIT; if [[ \"$URL\" =~ ^https:// ]]; then HTTP_CODE=$(curl -sS --max-time 3 --max-filesize 2097152 --proto \"=https\" -w \"%{http_code}\" \"$URL\" -o \"$TMP_FILE\" 2>/dev/null || echo \"000\"); if [[ \"$HTTP_CODE\" != \"200\" ]]; then exit 1; fi; elif [[ \"$URL\" =~ ^file://(/.*) ]] || [[ \"$URL\" =~ ^(/.*) ]]; then FILE_PATH=\"${BASH_REMATCH[1]}\"; python3 -c '\nimport os,stat,sys\np=sys.argv[1]\nfd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)\nst=os.fstat(fd)\nif not(stat.S_ISREG(st.st_mode) and 4<=st.st_size<=2097152):\n os.close(fd)\n sys.exit(1)\nd=os.read(fd,2097152)\nos.close(fd)\nsys.stdout.buffer.write(d)\n' \"$FILE_PATH\" > \"$TMP_FILE\" 2>/dev/null; else exit 1; fi; MAGIC=$(od -N 12 -A n -t x1 \"$TMP_FILE\" 2>/dev/null | tr -d \" \\n\"); if [[ \"$MAGIC\" =~ ^89504e470d0a1a0a ]] || [[ \"$MAGIC\" =~ ^ffd8 ]] || [[ \"$MAGIC\" =~ ^47494638 ]] || [[ \"$MAGIC\" =~ ^424d ]] || [[ \"$MAGIC\" =~ ^52494646.{8}57454250 ]]; then mv -f \"$TMP_FILE\" \"$CACHE_FILE\"; exit 0; else exit 1; fi",
+      "set -euo pipefail; URL=\"$1\"; CACHE_FILE=\"$2\"; CACHE_DIR=\"$(dirname \"$CACHE_FILE\")\"; mkdir -p -m 0700 \"$CACHE_DIR\"; find \"$CACHE_DIR\" -maxdepth 1 -name \"artwork.??????\" ! -name \"artwork.cache\" -mmin +1 -delete 2>/dev/null || true; TMP_FILE=$(mktemp -p \"$CACHE_DIR\" artwork.XXXXXX); trap 'rm -f \"${TMP_FILE:-}\"' EXIT; if [[ \"$URL\" =~ ^https:// ]]; then HTTP_CODE=$(curl -sS --max-time 3 --max-filesize 2097152 --proto \"=https\" -w \"%{http_code}\" \"$URL\" -o \"$TMP_FILE\" 2>/dev/null || echo \"000\"); if [[ \"$HTTP_CODE\" != \"200\" ]]; then exit 1; fi; elif [[ \"$URL\" =~ ^file://(/.*) ]] || [[ \"$URL\" =~ ^(/.*) ]]; then FILE_PATH=\"${BASH_REMATCH[1]%%\\?*}\"; python3 -c '\nimport os,stat,sys\np=sys.argv[1]\nfd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)\nst=os.fstat(fd)\nif not(stat.S_ISREG(st.st_mode) and 4<=st.st_size<=2097152):\n os.close(fd)\n sys.exit(1)\nd=os.read(fd,2097152)\nos.close(fd)\nsys.stdout.buffer.write(d)\n' \"$FILE_PATH\" > \"$TMP_FILE\" 2>/dev/null; else exit 1; fi; MAGIC=$(od -N 12 -A n -t x1 \"$TMP_FILE\" 2>/dev/null | tr -d \" \\n\"); if [[ \"$MAGIC\" =~ ^89504e470d0a1a0a ]] || [[ \"$MAGIC\" =~ ^ffd8 ]] || [[ \"$MAGIC\" =~ ^47494638 ]] || [[ \"$MAGIC\" =~ ^424d ]] || [[ \"$MAGIC\" =~ ^52494646.{8}57454250 ]]; then mv -f \"$TMP_FILE\" \"$CACHE_FILE\"; exit 0; else exit 1; fi",
       "--",
       raw,
       root.artworkCachePath
     ]
+    artFetchProc.startedGeneration = root.artFetchGeneration
     artFetchProc.running = true
   }
 
   Process {
     id: artFetchProc
+    // The generation this process was started for; see artFetchGeneration.
+    property int startedGeneration: 0
     onExited: function(exitCode) {
+      // Stale exit from a fetch that was killed by a later candidate change:
+      // the newer candidate's handler already arranged the current state.
+      if (startedGeneration !== root.artFetchGeneration) return
       if (exitCode === 0) {
         root.verifiedArtUrl = "file://" + root.artworkCachePath + "?t=" + Date.now()
       } else {
@@ -266,6 +298,10 @@ BarWidget {
 
   function sourceIcon(player) {
     return MediaModel.sourceIcon(player)
+  }
+
+  function sourceIconPath(player) {
+    return MediaModel.sourceIconPath(player)
   }
 
   visible: true
@@ -632,9 +668,21 @@ BarWidget {
             visible: source !== ""
           }
 
+          // Real app icon (e.g. Cider's own logo) when artwork is missing
+          Image {
+            id: fallbackSourceImage
+            anchors.centerIn: parent
+            visible: root.artUrl === "" && status === Image.Ready
+            width: Style.font.displayLarge
+            height: Style.font.displayLarge
+            fillMode: Image.PreserveAspectFit
+            mipmap: true
+            source: root.sourceIconPath(root.activePlayer)
+          }
+
           Text {
             anchors.centerIn: parent
-            visible: root.artUrl === ""
+            visible: root.artUrl === "" && !fallbackSourceImage.visible
             text: root.hasMedia ? root.sourceIcon(root.activePlayer) : "󰝚"
             textFormat: Text.PlainText
             color: Color.accent
@@ -651,8 +699,19 @@ BarWidget {
           // Active Source Badge
           Row {
             spacing: Style.space(4)
+            Image {
+              id: badgeSourceImage
+              source: root.hasMedia ? root.sourceIconPath(root.activePlayer) : ""
+              visible: status === Image.Ready
+              width: Style.font.caption
+              height: Style.font.caption
+              fillMode: Image.PreserveAspectCrop
+              mipmap: true
+              anchors.verticalCenter: parent.verticalCenter
+            }
             Text {
               text: root.sourceIcon(root.activePlayer)
+              visible: !badgeSourceImage.visible
               textFormat: Text.PlainText
               color: Color.accent
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -981,6 +1040,7 @@ BarWidget {
               && root.playerCanonicalKey(root.activePlayer) === root.playerCanonicalKey(player)
             readonly property string name: root.sourceName(player)
             readonly property string icon: root.sourceIcon(player)
+            readonly property string iconPath: root.sourceIconPath(player)
             readonly property string track: {
               if (!player) return "Active Player"
               var t = player.trackTitle || (player.metadata && player.metadata["xesam:title"]) || ""
@@ -1015,8 +1075,20 @@ BarWidget {
               anchors.rightMargin: Style.space(10)
               spacing: Style.space(10)
 
+              Image {
+                id: sourceCardIcon
+                source: sourceRow.iconPath
+                visible: status === Image.Ready
+                width: Style.font.subtitle
+                height: Style.font.subtitle
+                fillMode: Image.PreserveAspectCrop
+                mipmap: true
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
               Text {
                 text: sourceRow.icon
+                visible: !sourceCardIcon.visible
                 textFormat: Text.PlainText
                 color: sourceRow.selected ? Color.accent : (root.bar ? root.bar.foreground : Color.foreground)
                 font.family: root.bar ? root.bar.fontFamily : Style.font.family
