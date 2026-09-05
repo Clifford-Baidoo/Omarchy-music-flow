@@ -210,8 +210,21 @@ Item {
     }
   }
 
-  readonly property var sourcePlayers: orderedSourcePlayers()
+  property var sourcePlayers: []
   readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
+
+  Timer {
+    id: sourcePlayersDebounceTimer
+    interval: 10
+    running: false
+    repeat: false
+    onTriggered: {
+      root.sourcePlayers = root.orderedSourcePlayers()
+    }
+  }
+
+  onPlayersChanged: sourcePlayersDebounceTimer.restart()
+  onPlaybackVersionChanged: sourcePlayersDebounceTimer.restart()
   // playerStartedAt changes every time syncPlayingOrder() runs (it writes playerStartedAt = next).
   // syncPlayingOrder() is called on every onIsPlayingChanged (via Instantiator below) and on
   // onPlayersChanged. So activePlayer re-evaluates automatically on every pause/resume/switch.
@@ -231,6 +244,17 @@ Item {
   // PlaybackStatus is stale (see isPlayerActive above).
   readonly property bool isPlaying: isPlayerActive(activePlayer)
 
+  Timer {
+    id: playbackDebounceTimer
+    interval: 10
+    running: false
+    repeat: false
+    onTriggered: {
+      root.syncPlayingOrder()
+      root.playbackVersion++
+    }
+  }
+
   // Per-player signal connections — use Mpris.players (UntypedObjectModel) directly
   // as the Instantiator model so Qt creates one Connections delegate per player.
   // Wire all relevant MprisPlayer notify signals so any change in state, track, or
@@ -240,29 +264,13 @@ Item {
     delegate: Connections {
       required property var modelData
       target: modelData
-      function onIsPlayingChanged() {
-        root.syncPlayingOrder()
-        root.playbackVersion++
-      }
-      function onPlaybackStateChanged() {
-        root.syncPlayingOrder()
-        root.playbackVersion++
-      }
-      function onMetadataChanged() {
-        root.playbackVersion++
-      }
-      function onTrackTitleChanged() {
-        root.playbackVersion++
-      }
-      function onTrackArtistChanged() {
-        root.playbackVersion++
-      }
-      function onTrackAlbumChanged() {
-        root.playbackVersion++
-      }
-      function onTrackArtUrlChanged() {
-        root.playbackVersion++
-      }
+      function onIsPlayingChanged() { playbackDebounceTimer.restart() }
+      function onPlaybackStateChanged() { playbackDebounceTimer.restart() }
+      function onMetadataChanged() { playbackDebounceTimer.restart() }
+      function onTrackTitleChanged() { playbackDebounceTimer.restart() }
+      function onTrackArtistChanged() { playbackDebounceTimer.restart() }
+      function onTrackAlbumChanged() { playbackDebounceTimer.restart() }
+      function onTrackArtUrlChanged() { playbackDebounceTimer.restart() }
     }
   }
 
