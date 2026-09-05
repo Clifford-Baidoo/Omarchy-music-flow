@@ -186,6 +186,12 @@ BarWidget {
       return
     }
 
+    if (raw.indexOf("file://" + root.artworkCachePath) === 0) {
+      artFetchProc.running = false
+      root.verifiedArtUrl = raw
+      return
+    }
+
     // Remote HTTPS or local file: validate & cache with strict byte limits, no redirects, secure mktemp, and magic byte check
     root.verifiedArtUrl = ""
     artFetchProc.running = false
