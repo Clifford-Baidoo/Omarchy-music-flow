@@ -524,7 +524,9 @@ function isAllowedLocalPath(path) {
   var isCacheOrTemp = (
     path.indexOf("/tmp/") === 0 ||
     path.indexOf("/var/tmp/") === 0 ||
-    /\/\.cache\//.test(path)
+    /\/\.cache\//.test(path) ||
+    /\/\.config\/zen\/firefox-mpris\//.test(path) ||
+    /\/\.config\/firefox\/firefox-mpris\//.test(path)
   )
   var isSystemIcon = (
     path.indexOf("/usr/share/icons/") === 0 ||
