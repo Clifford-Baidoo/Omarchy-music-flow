@@ -502,6 +502,12 @@ function isAllowedLocalPath(path) {
   if (!path || typeof path !== "string") return false
   if (path.length > MAX_URL_LENGTH) return false
 
+  // Strip query parameters (like ?t=timestamp) before validating the file path
+  var qIndex = path.indexOf("?");
+  if (qIndex !== -1) {
+    path = path.substring(0, qIndex);
+  }
+
   // Reject control characters and directory traversal
   if (/[\x00-\x1f\x7f]/.test(path)) return false
   if (path.indexOf("..") !== -1) return false
