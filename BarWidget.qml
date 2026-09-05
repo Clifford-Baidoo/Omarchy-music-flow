@@ -600,12 +600,13 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(300))
-    contentHeight: popup.fittedContentHeight(column.implicitHeight)
+    contentWidth: popup.fittedContentWidth(Style.space(340))
+    contentHeight: popup.fittedContentHeight(column.implicitHeight + Style.space(32))
 
     Column {
       id: column
       anchors.fill: parent
+      anchors.margins: Style.space(16)
       spacing: Style.space(12)
 
       // Top Row: Album Cover Art & Song Info
@@ -797,12 +798,14 @@ BarWidget {
         // instead of letting it render past the popup's edge - the popup's
         // height already sizes to column.implicitHeight, so a wrap just makes
         // the popup a bit taller instead of visually overflowing sideways.
-        Flow {
+        Column {
           width: parent.width
-          spacing: Style.space(6)
+          spacing: Style.space(8)
 
           Row {
-            spacing: Style.space(4)
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(6)
+
             Repeater {
               model: [
                 { id: "wave", name: "Wave", icon: "󰎆" },
@@ -873,11 +876,12 @@ BarWidget {
                 }
               }
             }
-          }
+          } // closes Row
 
           // Text / Pure Flow Toggle Pill
           BorderSurface {
             id: textToggleBtn
+            anchors.horizontalCenter: parent.horizontalCenter
             // Sized from the label's own implicit width instead of a fixed guess -
             // a hardcoded width here is exactly what overflowed the popup's edge.
             width: toggleLabel.implicitWidth + Style.space(16)
