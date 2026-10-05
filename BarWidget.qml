@@ -11,8 +11,66 @@ BarWidget {
   moduleName: "custom.media"
 
   property var service: null
-  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
+  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse", "none"
   property bool showText: true           // Toggle track title / artist text in bar capsule
+
+  // "none" renders a static pill (glyph + optional text) with no Canvas
+  // animation at all: the FrameAnimation driver is stopped and the Canvas
+  // hidden, so the visualizer costs zero CPU/GPU in this mode.
+  function normalizeVisualizerMode(m) {
+    return (m === "wave" || m === "bars" || m === "dots"
+      || m === "particles" || m === "pulse" || m === "none") ? m : "wave"
+  }
+
+  function persistWidgetSettings(patch) {
+    var current = (typeof settings !== "undefined" && settings) ? settings : ({})
+    var localSettings = ({})
+    for (var k in current) localSettings[k] = current[k]
+    for (var p in patch) localSettings[p] = patch[p]
+    if (typeof settings !== "undefined") settings = localSettings
+    var sh = root.bar && root.bar.shell ? root.bar.shell : null
+    if (sh && typeof sh.updateEntryInline === "function") {
+      var entry = ({ id: root.moduleName || "custom.media" })
+      for (var e in localSettings) entry[e] = localSettings[e]
+      sh.updateEntryInline(entry.id, entry)
+    }
+  }
+
+  function setVisualizerMode(mode) {
+    var next = normalizeVisualizerMode(mode)
+    if (next === root.visualizerMode) return
+    root.visualizerMode = next
+    waveCanvas.requestPaint()
+    persistWidgetSettings({ visualizerMode: next })
+  }
+
+  function setShowText(value) {
+    var next = Boolean(value)
+    if (next === root.showText) return
+    root.showText = next
+    persistWidgetSettings({ showText: next })
+  }
+
+  // Adopt persisted settings (shell.json entry props) on load and when the
+  // shell pushes new ones. Guards prevent feedback loops with the setters.
+  function applySettingsToState() {
+    if (typeof settings === "undefined" || !settings) return
+    if (settings.visualizerMode !== undefined) {
+      var nextMode = normalizeVisualizerMode(settings.visualizerMode)
+      if (nextMode !== root.visualizerMode) {
+        root.visualizerMode = nextMode
+        waveCanvas.requestPaint()
+      }
+    }
+    if (settings.showText !== undefined) {
+      var nextText = Boolean(settings.showText)
+      if (nextText !== root.showText) root.showText = nextText
+    }
+  }
+
+  onSettingsChanged: applySettingsToState()
+
+  Component.onCompleted: applySettingsToState()
 
   // The original repo registered this plugin under a per-user id
   // (${USER_NAME}.media) before this fork switched to the fixed
@@ -283,7 +341,7 @@ BarWidget {
     height: Math.min(parent.height - Style.space(6), Style.space(28))
     width: root.isMinimized
       ? height
-      : (root.showText ? (flowRow.implicitWidth + Style.space(16)) : Style.space(110))
+      : (root.showText ? (flowRow.implicitWidth + Style.space(16)) : (root.visualizerMode === "none" ? height : Style.space(110)))
     radius: height / 2
     clip: true
     color: clickArea.containsMouse ? Util.alpha(root.bar ? root.bar.barForeground : Color.foreground, 0.05) : "transparent"
@@ -301,7 +359,7 @@ BarWidget {
       id: waveCanvas
       anchors.fill: parent
       anchors.margins: Style.space(2)
-      visible: !root.isMinimized
+      visible: !root.isMinimized && root.visualizerMode !== "none"
 
       property real phase: 0
 
@@ -316,7 +374,7 @@ BarWidget {
       // drop visibly speeds the motion up, not just its amplitude.
       FrameAnimation {
         id: phaseDriver
-        running: true
+        running: !root.isMinimized && root.visualizerMode !== "none"
         readonly property real baseRate: (Math.PI * 2) / 2.2
 
         onTriggered: {
@@ -337,6 +395,7 @@ BarWidget {
         var midY = height / 2
         var energy = root.currentEnergy
         var mode = root.visualizerMode
+        if (mode === "none") return
 
         // Multi-frequency rhythm & beat intensity physics
         var bassPulse = Math.pow(Math.abs(Math.sin(phase * 2.5)), 3) * energy
@@ -576,7 +635,7 @@ BarWidget {
       if (mouse.button === Qt.MiddleButton) {
         root.runAction("playPause", root.activePlayer)
       } else if (mouse.button === Qt.RightButton) {
-        root.showText = !root.showText
+        root.setShowText(!root.showText)
       } else {
         root.popupOpen = !root.popupOpen
       }
@@ -793,15 +852,19 @@ BarWidget {
         // theme spacing overrides, font metrics, and popup width clamping that
         // can't be predicted from fixed numbers alone (a hardcoded width already
         // overflowed the popup's edge once at this row's natural content width).
-        // Flow wraps the toggle pill onto its own line if it doesn't fit,
-        // instead of letting it render past the popup's edge - the popup's
-        // height already sizes to column.implicitHeight, so a wrap just makes
-        // the popup a bit taller instead of visually overflowing sideways.
+        // Flow wraps extra mode buttons onto their own line instead of letting
+        // them render past the popup's edge - the popup's height already sizes
+        // to column.implicitHeight, so a wrap just makes the popup a bit taller
+        // instead of visually overflowing sideways.
         Flow {
           width: parent.width
           spacing: Style.space(6)
 
-          Row {
+          // Flow (not Row) so extra mode buttons (e.g. a 6th one) wrap to the
+          // next line instead of overflowing past the popup's edge and being
+          // clipped.
+          Flow {
+            width: parent.width
             spacing: Style.space(4)
             Repeater {
               model: [
@@ -809,7 +872,8 @@ BarWidget {
                 { id: "bars", name: "Bars", icon: "󰝛" },
                 { id: "dots", name: "Dots", icon: "󰄰" },
                 { id: "particles", name: "Sparks", icon: "󰠱" },
-                { id: "pulse", name: "Pulse", icon: "󰓎" }
+                { id: "pulse", name: "Pulse", icon: "󰓎" },
+                { id: "none", name: "None", icon: "󰈉" }
               ]
 
               BorderSurface {
@@ -867,8 +931,7 @@ BarWidget {
                   onEntered: flowBtn.hovered = true
                   onExited: flowBtn.hovered = false
                   onClicked: {
-                    root.visualizerMode = flowBtn.modelData.id
-                    waveCanvas.requestPaint()
+                    root.setVisualizerMode(flowBtn.modelData.id)
                   }
                 }
               }
@@ -918,7 +981,7 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.showText = !root.showText
+              onClicked: root.setShowText(!root.showText)
             }
           }
         }
