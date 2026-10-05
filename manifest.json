@@ -19,7 +19,28 @@
     "displayName": "Music Flow",
     "description": "MPRIS soundwave visualizer with floating player window",
     "category": "Media",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaults": {
+      "visualizerMode": "wave",
+      "showText": true
+    },
+    "schema": [
+      {
+        "key": "visualizerMode",
+        "type": "enum",
+        "label": "Visualizer mode",
+        "description": "Bar visualizer animation, or None for a static pill with no animation.",
+        "options": ["wave", "bars", "dots", "particles", "pulse", "none"],
+        "defaultValue": "wave"
+      },
+      {
+        "key": "showText",
+        "type": "boolean",
+        "label": "Show track text",
+        "description": "Show track title and artist in the bar pill.",
+        "defaultValue": true
+      }
+    ]
   },
   "omarchy": {
     "clonedFrom": "omarchy.media"
