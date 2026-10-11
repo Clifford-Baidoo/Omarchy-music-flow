@@ -11,7 +11,7 @@ BarWidget {
   moduleName: "custom.media"
 
   property var service: null
-  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse"
+  property string visualizerMode: "wave" // "wave", "bars", "dots", "particles", "pulse", "cava"
   property bool showText: true           // Toggle track title / artist text in bar capsule
 
   // The original repo registered this plugin under a per-user id
@@ -107,24 +107,27 @@ BarWidget {
   // a constant. Falls back to the old fixed energy when no matching PipeWire stream could
   // be found for the player at all. Paused/idle keep the ambient drift levels.
   //
-  // audioGain was 2.4, which sounds like a modest boost but isn't: live-sampled
+  // audioGain went 2.4 -> 1.15 in an earlier session, still not low enough: live
   // mediaService.audioLevel for ordinary loud playback (a YouTube video in Chromium)
-  // sat in the 0.33-0.86 range, and 2.4x of that clips the Math.min(1.0, ...) ceiling
-  // for the overwhelming majority of samples (14/15 in one live capture) - the exact
-  // same constant 1.0 the "no live data" branch above returns. So the genuinely
-  // reactive path was visually indistinguishable from the ambient fallback for most
-  // real playback, which is what read as "it's falling back" even though
-  // hasLiveAudioLevel/fallbackPeakActive correctly reported real data was in use.
-  // Dropped to a gain that only lifts genuinely quiet passages up toward the ceiling,
-  // instead of pinning ordinary loud playback there too.
-  property real audioGain: 1.15
-  property real audioFloor: 0.15
+  // sat in the 0.77-0.86 range in a live capture, and even 1.15x of that clips the
+  // Math.min(1.0, ...) ceiling almost every sample - every visualizer mode rendered
+  // the same near-maxed, visually frozen shape regardless of the real level actually
+  // moving underneath it ("nothing is moving" despite audioLevel measurably
+  // fluctuating sample to sample). The canvas now applies its own perceptual curve
+  // (shape(), in BarWidget's Canvas) to lift quiet passages instead, so this no
+  // longer needs to pre-boost the signal at all - any gain here just reintroduces
+  // the same ceiling-clipping for already-loud content.
+  property real audioGain: 1.0
   readonly property real liveAudioLevel: (mediaService && mediaService.audioLevel) || 0
   readonly property bool hasLiveAudioLevel: Boolean(mediaService && mediaService.hasLiveAudioLevel)
+  // Was a nonzero idle/paused baseline (0.08-0.18) and an always-on 0.15
+  // floor while playing, so every graph/line visualizer mode kept a
+  // resting height even with nothing actually happening - never a true
+  // zero. All three branches now return 0 whenever there's no real level
+  // to show; only genuinely live audio produces nonzero energy.
   readonly property real targetEnergy: {
-    if (!isPlaying) return hasMedia ? 0.18 : 0.08
-    if (!hasLiveAudioLevel) return 1.0
-    return Math.max(audioFloor, Math.min(1.0, liveAudioLevel * audioGain))
+    if (!isPlaying || !hasLiveAudioLevel) return 0
+    return Math.max(0, Math.min(1.0, liveAudioLevel * audioGain))
   }
   property real currentEnergy: targetEnergy
 
@@ -214,7 +217,18 @@ BarWidget {
   property bool isMinimized: false
 
   function close() { popupOpen = false }
-  property real maxLabelWidth: 220
+  // Was 220, then 140: still stretched the pill wider than the other bar
+  // chips for a short title. Trimmed further to keep the capsule closer in
+  // scale to the rest of the bar; most short titles still show without
+  // scrolling, longer ones just scroll a bit sooner.
+  property real maxLabelWidth: 100
+  // Width of the visualizer when it sits beside the track text instead of
+  // filling the whole pill behind it (see waveCanvas/flowRow below) - was a
+  // full-pill background with the title/artist text centered on top of it,
+  // which made the moving wave/bars/etc. compete with the text for
+  // readability. Icon-only modes (minimized, !showText) still use the full
+  // pill width since there's no text there to read past.
+  property real visualizerStripWidth: Style.space(30)
 
   function playerKey(player) {
     if (!player) return ""
@@ -283,7 +297,14 @@ BarWidget {
     height: Math.min(parent.height - Style.space(6), Style.space(28))
     width: root.isMinimized
       ? height
-      : (root.showText ? (flowRow.implicitWidth + Style.space(16)) : Style.space(110))
+      : (root.showText
+          ? (Style.space(1) + root.visualizerStripWidth + Style.space(5) + flowRow.implicitWidth + Style.space(6))
+          // Was Style.space(110): wider than the visualizer (which fills this
+          // whole pill in icon-only mode, unlike the narrow strip it gets
+          // beside text) needs to still read clearly, so it left noticeable
+          // empty-looking background around it. Trimmed while keeping enough
+          // room for the wave/bars/dots/particles shapes to stay legible.
+          : Style.space(72))
     radius: height / 2
     clip: true
     color: clickArea.containsMouse ? Util.alpha(root.bar ? root.bar.barForeground : Color.foreground, 0.05) : "transparent"
@@ -299,35 +320,57 @@ BarWidget {
     // Dynamic Multi-Mode Continuous Audio Visualizer Canvas
     Canvas {
       id: waveCanvas
-      anchors.fill: parent
-      anchors.margins: Style.space(2)
       visible: !root.isMinimized
+      // Side by side with flowRow's icon+text in text mode (a narrow left-hand
+      // strip) instead of anchors.fill: parent with the text centered on top
+      // of it - full pill width still applies to the icon-only modes below,
+      // which have no text to compete with.
+      anchors.left: parent.left
+      anchors.top: parent.top
+      anchors.bottom: parent.bottom
+      anchors.leftMargin: Style.space(2)
+      anchors.topMargin: Style.space(2)
+      anchors.bottomMargin: Style.space(2)
+      width: root.showText ? root.visualizerStripWidth : (parent.width - Style.space(4))
 
-      property real phase: 0
+      // Real per-band spectrum (root.mediaService.spectrumBands, a 14-band
+      // live Goertzel analysis - see Service.qml) instead of one aggregate
+      // loudness scalar. Every mode below reads its own slice of the real
+      // spectrum, so bars/dots/particles/cava genuinely move independently
+      // like a real equalizer instead of all rising and falling together
+      // off the same number; wave draws the actual frequency curve instead
+      // of a formula. scrollX still just paces particles' x-flow (speed
+      // tracks real energy, frozen at 0 energy - no motion with nothing
+      // playing).
+      property real scrollX: 0
 
-      // Phase speed scales with root.currentEnergy instead of running on a fixed
-      // wall-clock loop: previously phase advanced a full cycle every 2200ms
-      // regardless of what was playing, so only the wave's amplitude reacted to
-      // real audio - the motion itself always looked like the same repeating
-      // loop no matter how loud or quiet the track got (reported: "moving in a
-      // short loop", not in sync with the sound). Baseline rate matches the old
-      // fixed 2200ms/cycle; energy scales it from ~0.4x (quiet/idle ambient
-      // drift, motion never freezes abruptly) up to ~2x (loud) so a real beat
-      // drop visibly speeds the motion up, not just its amplitude.
-      FrameAnimation {
-        id: phaseDriver
-        running: true
-        readonly property real baseRate: (Math.PI * 2) / 2.2
-
-        onTriggered: {
-          if (frameTime <= 0 || frameTime > 1) return
-          var speed = baseRate * (0.4 + root.currentEnergy * 1.6)
-          var next = waveCanvas.phase + speed * frameTime
-          waveCanvas.phase = next >= Math.PI * 2 ? next - Math.PI * 2 : next
-        }
+      function sampleEnergy(dt) {
+        scrollX += dt * root.currentEnergy * 50
+        requestPaint()
       }
 
-      onPhaseChanged: requestPaint()
+      Timer {
+        id: sampleTimer
+        interval: 33
+        running: true
+        repeat: true
+        onTriggered: waveCanvas.sampleEnergy(interval / 1000)
+      }
+
+      // Resamples the real band array (whatever its length) onto `count`
+      // elements by nearest-neighbor index mapping, so bar/dot/particle
+      // counts (which scale with canvas width, not the band count) each
+      // still read a genuine, distinct slice of the spectrum.
+      function bandAt(bands, index, count) {
+        if (!bands || bands.length === 0) return 0
+        var i = Math.min(bands.length - 1, Math.floor((index / count) * bands.length))
+        return bands[i]
+      }
+
+      // Perceptual curve so quiet bands still read as visible motion
+      // instead of flat-lining: raw linear values near the AGC floor
+      // render as a barely-there sliver otherwise.
+      function shape(v) { return Math.pow(Math.max(0, Math.min(1, v)), 0.6) }
 
       onPaint: {
         var ctx = getContext("2d")
@@ -337,86 +380,104 @@ BarWidget {
         var midY = height / 2
         var energy = root.currentEnergy
         var mode = root.visualizerMode
-
-        // Multi-frequency rhythm & beat intensity physics
-        var bassPulse = Math.pow(Math.abs(Math.sin(phase * 2.5)), 3) * energy
-        var melodySwell = (0.5 + 0.5 * Math.sin(phase * 0.35)) * energy
-        var intensity = 0.2 + (bassPulse * 0.5 + melodySwell * 0.3) * energy
+        var bands = root.mediaService ? root.mediaService.spectrumBands : []
+        var bn = bands.length
 
         if (mode === "wave") {
-          // 1. DUAL HARMONIC REACTIVE OCEAN WAVE
-          var amp = height * (0.06 + energy * (0.22 + intensity * 0.15))
-
-          ctx.lineWidth = 1.2 + bassPulse * 0.8
+          // The real frequency-response curve itself (bass on the left,
+          // treble on the right) instead of a sine formula - genuinely
+          // reflects what's playing, and is "wavy" because real spectra
+          // are. A second curve walks the same bands in reverse (treble
+          // to bass), so the two lines cross wherever the spectrum's low
+          // and high ends happen to agree, instead of running parallel.
+          ctx.lineWidth = 1.2
           ctx.strokeStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
           ctx.beginPath()
-          for (var x = 0; x <= width; x += 3) {
-            var k = (x / width) * Math.PI * 4
-            var y = midY + Math.sin(k + phase * (0.8 + energy * 0.4)) * Math.cos(k * 0.5 + phase * 0.6) * amp
-            if (x === 0) ctx.moveTo(x, y)
+          for (var i = 0; i < bn; i++) {
+            var x = bn > 1 ? (i / (bn - 1)) * width : 0
+            var y = midY - shape(bands[i]) * height * 0.42
+            if (i === 0) ctx.moveTo(x, y)
             else ctx.lineTo(x, y)
           }
           ctx.stroke()
 
-          if (energy > 0.25) {
+          if (bn > 0) {
             ctx.lineWidth = 0.9
             ctx.strokeStyle = root.bar ? root.bar.barForeground : Color.foreground
             ctx.beginPath()
-            for (var x2 = 0; x2 <= width; x2 += 3) {
-              var k2 = (x2 / width) * Math.PI * 3
-              var y2 = midY + Math.sin(k2 - phase * 1.2) * (amp * 0.65)
-              if (x2 === 0) ctx.moveTo(x2, y2)
-              else ctx.lineTo(x2, y2)
+            for (var j = 0; j < bn; j++) {
+              var xj = bn > 1 ? (j / (bn - 1)) * width : 0
+              var yj = midY + shape(bands[bn - 1 - j]) * height * 0.32
+              if (j === 0) ctx.moveTo(xj, yj)
+              else ctx.lineTo(xj, yj)
             }
             ctx.stroke()
           }
         } else if (mode === "bars") {
-          // 2. ADAPTIVE FREQUENCY EQUALIZER BARS
-          var numBars = root.showText ? 16 : 22
+          // Scaled to the canvas's actual width rather than a showText-keyed
+          // constant: the visualizer strip is much narrower (~30px) beside the
+          // text than it is filling the whole pill (~100px+) in icon-only mode,
+          // and a fixed 16 bars packed into 30px rendered as an illegible smear.
+          var numBars = Math.max(3, Math.round(width / 5))
           var barW = (width / numBars) * 0.45
           var gap = (width / numBars) * 0.55
           ctx.fillStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
           for (var b = 0; b < numBars; b++) {
-            var barFreq = Math.abs(Math.sin(phase * 2.0 + b * 0.75) * Math.cos(phase * 1.2 + b * 0.35))
-            var bh = (barFreq * (height * (0.15 + energy * (0.3 + intensity * 0.35))) + 2)
+            var bh = shape(bandAt(bands, b, numBars)) * height * 0.85 + 2
             var bx = b * (barW + gap) + gap / 2
             var by = midY - bh / 2
             ctx.fillRect(bx, by, barW, bh)
           }
         } else if (mode === "dots") {
-          // 3. PULSING WAVE MATRIX BEADS
-          var numDots = root.showText ? 14 : 18
+          // Width-scaled for the same reason as numBars above.
+          var numDots = Math.max(3, Math.round(width / 6))
           var step = width / (numDots + 1)
           ctx.fillStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
           for (var d = 1; d <= numDots; d++) {
             var dx = d * step
-            var dotOsc = Math.sin(phase * 2.0 + d * 0.6)
-            var dy = midY + dotOsc * (height * (0.08 + energy * (0.18 + intensity * 0.16)))
-            var r = (1.5 + (bassPulse * 1.0) + (energy * 0.8))
+            var dsample = shape(bandAt(bands, d, numDots))
+            var dy = midY + (d % 2 === 0 ? 1 : -1) * dsample * height * 0.4
+            var r = 1.5 + dsample * 1.8
             ctx.beginPath()
             ctx.arc(dx, dy, r, 0, Math.PI * 2)
             ctx.fill()
           }
         } else if (mode === "particles") {
-          // 4. FLOWING SOUND DUST / SPARKS
-          var numParts = root.showText ? 12 : 16
+          // Width-scaled for the same reason as numBars above. X position
+          // scrolls on real elapsed time (speed still tracks real energy);
+          // size/Y amplitude come from this particle's own band.
+          var numParts = Math.max(3, Math.round(width / 7))
           for (var pIdx = 0; pIdx < numParts; pIdx++) {
-            var speed = 20 + energy * 20 + bassPulse * 10
-            var px = ((pIdx * 28 + (phase / (Math.PI * 2)) * width * (0.6 + energy * 0.6)) % width)
-            var py = midY + Math.sin(px * 0.08 + phase + pIdx) * (height * (0.08 + energy * (0.2 + intensity * 0.15)))
+            var px = (pIdx * 28 + scrollX) % width
+            var psample = shape(bandAt(bands, pIdx, numParts))
+            var py = midY + (pIdx % 2 === 0 ? 1 : -1) * psample * height * 0.35
             ctx.fillStyle = (pIdx % 2 === 0) ? (energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)) : (root.bar ? root.bar.barForeground : Color.foreground)
             ctx.beginPath()
-            ctx.arc(px, py, 1.4 + energy * 0.8 + bassPulse * 0.6, 0, Math.PI * 2)
+            ctx.arc(px, py, 1.4 + psample * 1.4, 0, Math.PI * 2)
             ctx.fill()
           }
         } else if (mode === "pulse") {
-          // 5. RHYTHMIC BREATHING AUDIO HEARTBEAT
-          var pulseScale = 0.25 + energy * (0.35 + intensity * 0.4)
+          // Driven directly by the live scalar, no synthetic beat formula.
+          var pulseScale = 0.25 + energy * 0.65
           var grad = ctx.createRadialGradient(width / 2, midY, 2, width / 2, midY, (width / 2) * pulseScale)
           grad.addColorStop(0, energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.3))
           grad.addColorStop(1, "transparent")
           ctx.fillStyle = grad
           ctx.fillRect(0, 0, width, height)
+        } else if (mode === "cava") {
+          // Classic cava-style equalizer: same bar count/width scaling as
+          // "bars" above, but anchored to the bottom (0 height when silent)
+          // and growing straight up only, instead of "bars"'s symmetric
+          // grow-from-middle.
+          var numCavaBars = Math.max(3, Math.round(width / 5))
+          var cavaBarW = (width / numCavaBars) * 0.45
+          var cavaGap = (width / numCavaBars) * 0.55
+          ctx.fillStyle = energy > 0.4 ? Color.accent : Util.alpha(Color.accent, 0.4)
+          for (var cb = 0; cb < numCavaBars; cb++) {
+            var cbh = shape(bandAt(bands, cb, numCavaBars)) * height
+            var cbx = cb * (cavaBarW + cavaGap) + cavaGap / 2
+            ctx.fillRect(cbx, height - cbh, cavaBarW, cbh)
+          }
         }
       }
     }
@@ -455,10 +516,12 @@ BarWidget {
       }
     }
 
-    // Full Expanded Mode (Music icon + Scrolling song name over flow)
+    // Full Expanded Mode (Music icon + Scrolling song name, beside the flow visualizer)
     Row {
       id: flowRow
-      anchors.centerIn: parent
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.left: waveCanvas.right
+      anchors.leftMargin: Style.space(7)
       spacing: Style.space(7)
       visible: !root.isMinimized && root.showText
 
@@ -789,19 +852,25 @@ BarWidget {
         width: parent.width
         spacing: Style.space(6)
 
-        // Flow instead of Row: the exact pixel width available here depends on
-        // theme spacing overrides, font metrics, and popup width clamping that
-        // can't be predicted from fixed numbers alone (a hardcoded width already
-        // overflowed the popup's edge once at this row's natural content width).
-        // Flow wraps the toggle pill onto its own line if it doesn't fit,
-        // instead of letting it render past the popup's edge - the popup's
-        // height already sizes to column.implicitHeight, so a wrap just makes
-        // the popup a bit taller instead of visually overflowing sideways.
-        Flow {
+        // Column instead of Flow/Row: Column only ever positions children
+        // vertically and leaves their x alone, so each child below can use
+        // anchors.horizontalCenter to actually center itself - a positioner
+        // that also controls x (Row, Flow) overrides any anchor on its
+        // direct children, which is why centering wasn't possible before.
+        Column {
           width: parent.width
           spacing: Style.space(6)
 
-          Row {
+          Grid {
+            // Grid instead of Flow: a fixed column count gives a
+            // deterministic, centerable block width (columns * cell width)
+            // regardless of each label's text length, instead of Flow's
+            // width-dependent wrap point - and it still reliably wraps the
+            // 6 mode buttons onto a second row instead of overflowing the
+            // popup edge, which is what broke when Cava was added as a 6th
+            // button inside a plain (non-wrapping) Row.
+            anchors.horizontalCenter: parent.horizontalCenter
+            columns: 3
             spacing: Style.space(4)
             Repeater {
               model: [
@@ -809,7 +878,8 @@ BarWidget {
                 { id: "bars", name: "Bars", icon: "󰝛" },
                 { id: "dots", name: "Dots", icon: "󰄰" },
                 { id: "particles", name: "Sparks", icon: "󰠱" },
-                { id: "pulse", name: "Pulse", icon: "󰓎" }
+                { id: "pulse", name: "Pulse", icon: "󰓎" },
+                { id: "cava", name: "Cava", icon: "󰤽" }
               ]
 
               BorderSurface {
@@ -878,6 +948,7 @@ BarWidget {
           // Text / Pure Flow Toggle Pill
           BorderSurface {
             id: textToggleBtn
+            anchors.horizontalCenter: parent.horizontalCenter
             // Sized from the label's own implicit width instead of a fixed guess -
             // a hardcoded width here is exactly what overflowed the popup's edge.
             width: toggleLabel.implicitWidth + Style.space(16)
@@ -1007,6 +1078,22 @@ BarWidget {
               ? Border.controlSpec("normal", root.bar ? root.bar.foreground : Color.foreground, Color.accent)
               : (sourceRow.hovered ? Border.controlSpec("hover-cursor", root.bar ? root.bar.foreground : Color.foreground, Color.accent) : Border.none())
 
+            // Declared before Row (and its nested play/pause MouseArea) so it
+            // stacks underneath: non-interactive content in Row still lets
+            // clicks fall through to this for select, but the play/pause
+            // icon's own MouseArea (stacked on top, inside Row below) takes
+            // priority over its small hit area instead of this swallowing
+            // every click in the row first.
+            MouseArea {
+              id: sourceCardMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onEntered: sourceRow.hovered = true
+              onExited: sourceRow.hovered = false
+              onClicked: root.selectPlayer(sourceRow.player)
+            }
+
             Row {
               anchors.left: parent.left
               anchors.right: parent.right
@@ -1051,24 +1138,41 @@ BarWidget {
                 }
               }
 
-              Text {
-                text: (sourceRow.player && sourceRow.player.isPlaying) ? "󰏤" : "󰐊"
-                textFormat: Text.PlainText
-                color: sourceRow.selected ? Color.accent : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6)
-                font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                font.pixelSize: Style.font.bodySmall
+              // A real toggle, not just a status glyph: previously this only
+              // ever reflected the raw (sometimes stale - see currentEnergy's
+              // audioGain comment history) player.isPlaying, and the row's
+              // own click only ever selected-and-played, never paused, so
+              // there was no way to pause a source from here at all - the
+              // reported "play/pause on each source doesn't respond". Reads
+              // through mediaService's PipeWire-aware activity check instead
+              // of the raw MPRIS flag, and has its own MouseArea (consumes
+              // the click before it reaches the row's select-only area below)
+              // that calls playPause for this specific source.
+              Item {
+                width: playPauseIcon.implicitWidth + Style.space(12)
+                height: parent.height
                 anchors.verticalCenter: parent.verticalCenter
-              }
-            }
 
-            MouseArea {
-              id: sourceCardMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onEntered: sourceRow.hovered = true
-              onExited: sourceRow.hovered = false
-              onClicked: root.selectPlayer(sourceRow.player)
+                Text {
+                  id: playPauseIcon
+                  anchors.centerIn: parent
+                  text: (sourceRow.player && root.mediaService && root.mediaService.isSourceActive(sourceRow.player)) ? "󰏤" : "󰐊"
+                  textFormat: Text.PlainText
+                  color: playPauseMouse.containsMouse
+                    ? Color.accent
+                    : (sourceRow.selected ? Color.accent : Qt.darker(root.bar ? root.bar.foreground : Color.foreground, 1.6))
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                MouseArea {
+                  id: playPauseMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.runAction("playPause", sourceRow.player)
+                }
+              }
             }
           }
         }

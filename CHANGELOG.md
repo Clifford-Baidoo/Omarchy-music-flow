@@ -1,8 +1,196 @@
 # Changelog
 
-## Unreleased
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+## [1.2.3] - 2026-10-06
 
 ### Fixed
+
+- **Pausing one source made a different, untouched source of the same app
+  show as playing too (and vice versa).** `playerActivityRank()`'s stream
+  fallback treated an absent `pulse.corked` property as "active" - mpv
+  never sets it at all (a native PipeWire client, not going through the
+  pulse compatibility layer), so it always read as active regardless of
+  real state. Replaced with real peak monitoring: every playback stream
+  gets its own `PwNodePeakMonitor`, with a 1.5s grace window tracking
+  genuine recent audibility instead of trusting an absent cork flag.
+  That exposed a second bug: stream-to-player matching is also app-name-
+  only, so it couldn't tell two real mpv processes' streams apart either
+  (confirmed live: both labeled plain "mpv", no PipeWire property
+  distinguishes which process owns which). PipeWire's `media.name` does
+  carry the real per-stream track title, so matching now narrows to the
+  stream(s) whose `media.name` actually contains the player's own current
+  track whenever the app-name match is ambiguous.
+
+## [1.2.2] - 2026-10-06
+
+### Fixed
+
+- **Controls were effectively stuck to one source.** `preferredPlayerKey`
+  (the user's explicit source selection) was stored as the collapsed
+  canonical key, ambiguous whenever two real player processes share the
+  same app name, so selecting either of two real sources silently
+  controlled the same one. Separately, `selectActivePlayer()` actively
+  handed control back to "whatever else is playing" the moment the
+  selected player merely paused. Added `preferredPlayerExactKey` (the
+  exact dbus name of the specific player object clicked, checked first
+  wherever the preferred player is resolved) and removed the steal-back
+  behavior - an explicit selection now stays selected regardless of what
+  else starts or stops playing, until the user picks a different source
+  or it disappears entirely.
+- **Each source row's play/pause glyph only ever reflected one dbus
+  alias's sometimes-stale `isPlaying`, and had no actual play/pause
+  control** - clicking anywhere on a row only selected (and auto-played)
+  it, never paused it. Added a dedicated play/pause toggle to each source
+  row (its own `MouseArea`, stacked above the row's select-only area) and
+  removed `selectPlayer()`'s auto-play side effect, so selecting a source
+  and playing/pausing it are now separate actions.
+- **The main transport icon, and now each source row's icon, could show
+  the wrong play/pause state.** mpv keeps its PipeWire sink node open
+  briefly after `pause()`, so the stream-fallback in
+  `playerActivityRank()` kept ranking a just-paused player as active.
+  Added a short-lived pause override, tracked per real process (a single
+  process can expose several simultaneous dbus aliases as separate player
+  objects, and a sibling alias not directly commanded can independently
+  keep reporting active), cleared immediately on a subsequent play so a
+  quick pause-then-resume doesn't get stuck showing paused. Added
+  `isSourceActive()`, grouping activity across all of a process's dbus
+  aliases instead of trusting whichever single one a list happened to
+  keep.
+
+## [1.2.1] - 2026-10-06
+
+### Fixed
+
+- **The "SELECT PLAYER / SOURCE" list only ever showed one source when
+  multiple players of the same app were active** (`Service.qml`).
+  `playerCanonicalKey()` strips the dbus instance suffix down to just the
+  app name, so two genuinely separate processes of the same app (two mpv
+  windows playing different tracks) collapsed to the same key and the
+  list's dedup kept only the first one. Reproduced live: 2 real mpv
+  processes registered 5 distinct dbus names between them (mpv-mpris's
+  instance suffix doesn't reliably correlate 1:1 with the real process -
+  one single process here owned two different instance-suffixed names at
+  once), all resolving to the same canonical key `"mpv"`. Didn't change
+  `playerCanonicalKey()` itself (`playerStartedAt`/`preferredPlayerKey`/
+  `lastActivePlayerKey` all need it to stay stable across a track change).
+  Added a separate, display-only `sourceListKey()` (canonical key + current
+  track signature) used just by `orderedSourcePlayers()`/
+  `orderedCycleSourcePlayers()` - same-process duplicate dbus registrations
+  still collapse correctly, while different processes playing different
+  content now list separately.
+
+## [1.2.0] - 2026-10-06
+
+### Added
+
+- **Real per-band spectrum analysis for every visualizer mode**
+  (`Service.qml`, `BarWidget.qml`). Every mode was driven by one aggregate
+  loudness scalar, so bars/dots/particles/cava all moved together in
+  lockstep instead of each reflecting its own frequency content like a
+  real equalizer. Added a 14-band live spectrum analyzer: extends the
+  existing `pw-record` fallback-peak-meter pattern with a small
+  stdlib-only Goertzel analysis (no numpy, no new dependency - and
+  deliberately not a dependency on the `cava` binary, which isn't
+  installed and shouldn't be required). Each band self-normalizes against
+  its own slowly-decaying recent peak. Bars/dots/particles/cava each now
+  read their own resampled slice of the real band array; wave mode draws
+  the actual frequency-response curve (bass to treble) plus a second
+  curve walking the same bands in reverse, so the two genuinely cross
+  instead of running parallel.
+
+### Fixed
+
+- **`pw-record --target=<node>` was silently capturing near-total silence**
+  for both the new spectrum analyzer and the pre-existing fallback peak
+  meter. Reproduced live: 186/187 captured chunks were pure silence despite
+  Quickshell's own `PwNodePeakMonitor` simultaneously reading real, loud
+  peak data from the same node. Adding `stream.capture.sink=true` to
+  `pw-record`'s format properties fixes it - without it, `pw-record` links
+  as a generic monitor input that mostly never receives that node's actual
+  audio.
+
+## [1.1.0] - 2026-10-06
+
+### Added
+
+- A new "Cava" visualizer mode: bars anchored to the baseline (0 height
+  when silent) growing straight up, instead of the existing "Bars" mode's
+  symmetric grow-from-middle.
+
+### Fixed
+
+- **The bar pill read as too wide next to the rest of the bar**, both with
+  track text shown and in icon-only mode. Trimmed `maxLabelWidth`
+  (220 → 100 across two passes) and the icon-only pill's fixed width
+  (110 → 72), and reduced the padding around the visualizer strip.
+- **The mode picker's 6th button (Cava) rendered past the popup's clipped
+  edge, invisible.** The buttons sat in a `Row` that never wraps
+  internally, inside a `Flow` that only wrapped it as one atomic block.
+  Switched the inner wrapper to a fixed-column `Grid` and the outer
+  wrapper to `Column` (leaves child `x` alone, so children can
+  `anchors.horizontalCenter`), centering both the mode-button grid and the
+  text-toggle pill.
+- **Every visualizer mode was driven by a synthetic phase accumulator on a
+  fixed wall-clock rate** - motion never stopped even with nothing
+  playing, and quiet passages looked identical to loud ones (gain 1.15x
+  combined with the session's actual live `audioLevel`, 0.77-0.86, clipped
+  to the 1.0 ceiling almost every sample). `targetEnergy`'s idle/paused
+  branches and an always-on floor also both returned nonzero baselines, so
+  no mode ever rested at a true 0. All three branches now return 0
+  whenever there's no real level to show, and gain/floor were removed in
+  favor of a perceptual curve applied at render time.
+- **Wave mode plotted raw magnitude as two parallel offset curves** (no
+  actual oscillation) instead of a real wave shape. Restored a sine-based
+  wave with two differing frequencies/phase speeds so the lines cross -
+  phase speed is proportional to real energy, so it's frozen (flat line)
+  at 0 energy and only moves with real audio.
+- **Dots mode showed no visible animation.** Bars/dots/particles/cava
+  switched from staggered per-element history sampling (elements barely
+  differed for slow-changing audio, most of the strip read as flat) to the
+  same live energy value applied to every element via fixed per-element
+  weights, plus phase-driven bobbing for dots specifically.
+### Known Issues
+
+- **The play/pause icon doesn't always update after pressing play or
+  pause on mpv.** Root cause diagnosed: `playerActivityRank()` only
+  trusts MPRIS for the positive case (`player.isPlaying → rank 2`); when
+  it's `false`, it always falls through to the PipeWire-stream-active
+  fallback (built for Chromium's known-stale "Stopped" reports), which
+  mpv also triggers since it keeps its PipeWire sink node open briefly
+  after pausing. Not yet fixed - needs a scoped change to that ranking
+  logic to trust an explicit MPRIS `false` from a reliable source instead
+  of always falling through.
+
+## [1.0.0] - 2026-10-06
+
+### Fixed
+
+- **The Spotify visualizer looked completely static despite genuinely live,
+  varying audio data** (`Service.qml`). Reported live while playing Spotify:
+  the widget itself was healthy (`hasMedia: true`, correct title/artist),
+  and `fallbackPeakActive: true` confirmed the pw-record fallback (used
+  because Quickshell's built-in `PwNodePeakMonitor` can't read Spotify's
+  44.1kHz stream - see the existing comment on `builtinAudioLevel`) was
+  active and producing real, varying numbers. But those numbers are on a
+  fundamentally different scale from the built-in monitor: a 20s live sample
+  put the fallback's raw peak-of-16-bit-PCM values at 0.03-0.30 (median
+  0.17), roughly 10x smaller than the 0.33-0.86 range `BarWidget.qml`'s
+  `audioGain` (1.15, tuned against the built-in monitor's scale) expects.
+  Fed through `targetEnergy`'s formula, that meant most of the fallback's
+  range - including the median - landed below `BarWidget.qml`'s own `0.15`
+  floor and got clamped flat, so genuinely reactive fallback audio still
+  read as "not displaying." Added a `fallbackPeakGain` (3.0) applied to the
+  raw pw-record peak at the source in `Service.qml`, before it's ever handed
+  to `BarWidget.qml`'s existing gain - re-verified against a fresh 60-sample
+  live Spotify capture: scaled `audioLevel` now spans 0.16-1.0 (median 0.60),
+  and after `BarWidget.qml`'s own gain/floor, `targetEnergy` spans 0.19-1.0
+  with 0 of 60 samples pinned at the floor (previously all of the median and
+  below were).
 
 - **The Chromium/YouTube visualizer looked like it was stuck on the ambient
   fallback even though it genuinely wasn't** (`BarWidget.qml`). Reported live:
@@ -388,8 +576,6 @@
   Previously a crash or power loss mid-write could leave the user's entire
   bar config — not just this plugin's entry — truncated and unreadable.
 
-## Previous session (untagged)
-
 ### Added
 
 - Per-app/per-stream volume control: a slider and mute toggle in the popup
@@ -420,3 +606,11 @@
   over their pre-layout position, since their color bound directly to
   `MouseArea.containsMouse`. Switched to an explicit `hovered` property
   driven only by `onEntered`/`onExited`.
+
+[Unreleased]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/DevInBlack001/Omarchy-music-flow-copy/releases/tag/v1.0.0
